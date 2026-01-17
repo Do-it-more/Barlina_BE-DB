@@ -14,7 +14,7 @@ const {
 const { protect, admin } = require('../middleware/authMiddleware');
 
 router.route('/')
-    .get(getProducts)
+    .get(protect, getProducts)
     .post(protect, admin, createProduct);
 
 router.get('/public', getProducts);

@@ -28,6 +28,12 @@ const userSchema = mongoose.Schema({
         type: Boolean,
         default: false
     },
+    // For OAuth users, email is automatically verified
+    authProvider: {
+        type: String,
+        enum: ['local', 'google'],
+        default: 'local'
+    },
     isPhoneVerified: {
         type: Boolean,
         default: false
@@ -38,7 +44,15 @@ const userSchema = mongoose.Schema({
     },
     password: {
         type: String,
-        required: [true, 'Please add a password']
+        required: function() {
+            // Password is required only if user is not using OAuth
+            return !this.googleId;
+        }
+    },
+    googleId: {
+        type: String,
+        unique: true,
+        sparse: true // Allows multiple null values
     },
     role: {
         type: String,
@@ -86,10 +100,9 @@ const userSchema = mongoose.Schema({
     timestamps: true
 });
 
-// Hash password before saving
-// Hash password before saving
+// Hash password before saving (only if password exists and is modified)
 userSchema.pre('save', async function () {
-    if (!this.isModified('password')) {
+    if (!this.isModified('password') || !this.password) {
         return;
     }
     const salt = await bcrypt.genSalt(10);

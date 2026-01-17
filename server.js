@@ -12,6 +12,13 @@ const { initializeFirebaseAdmin } = require('./config/firebaseAdmin');
 // Initialize Firebase
 initializeFirebaseAdmin();
 
+if (!process.env.GOOGLE_CLIENT_ID) {
+    console.warn("⚠️  WARNING: GOOGLE_CLIENT_ID is not set in .env file. Google OAuth will not work.");
+} else {
+    console.log("✅ Google Client ID found.");
+}
+
+
 const app = express();
 const server = require('http').createServer(app);
 const io = require('socket.io')(server, {

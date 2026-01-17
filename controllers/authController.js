@@ -1,12 +1,28 @@
 const jwt = require('jsonwebtoken');
 const bcrypt = require('bcryptjs');
 const asyncHandler = require('express-async-handler');
+const { OAuth2Client } = require('google-auth-library');
 
 const sendEmail = require('../utils/sendEmail');
 const User = require('../models/User');
 const Verification = require('../models/Verification');
 const { admin } = require('../config/firebaseAdmin');
 const crypto = require('crypto');
+
+// Initialize Google OAuth Client
+if (!process.env.GOOGLE_CLIENT_ID || !process.env.GOOGLE_CLIENT_SECRET) {
+    console.error("❌ CRITICAL ERROR: Google Client ID or Secret is missing from environment variables.");
+} else {
+    console.log(`✅ Initializing Google OAuth with Client ID ending in ...${process.env.GOOGLE_CLIENT_ID.slice(-6)}`);
+    // Check for Secret length just to be sure
+    console.log(`ℹ️  Google Client Secret length: ${process.env.GOOGLE_CLIENT_SECRET.length}`);
+}
+
+const client = new OAuth2Client(
+    process.env.GOOGLE_CLIENT_ID,
+    (process.env.GOOGLE_CLIENT_SECRET || '').trim(), // Trim whitespace
+    'postmessage'
+);
 
 // @desc    Register new user
 // @route   POST /api/users
@@ -827,6 +843,144 @@ const verifyMockPhoneOtp = asyncHandler(async (req, res) => {
     });
 });
 
+// @desc    Google OAuth Login/Register
+// @route   POST /api/users/google-auth
+// @access  Public
+// @desc    Google OAuth Login/Register
+// @route   POST /api/users/google-auth
+// @access  Public
+const googleAuth = asyncHandler(async (req, res) => {
+    const { code } = req.body; // Changed from 'token' to 'code' for auth-code flow
+
+    if (!code) {
+        res.status(400);
+        throw new Error('Google authorization code is required');
+    }
+
+    try {
+        // Exchange code for tokens
+        const { tokens } = await client.getToken(code);
+        client.setCredentials(tokens);
+
+        // Get User Profile
+        const ticket = await client.verifyIdToken({
+            idToken: tokens.id_token,
+            audience: process.env.GOOGLE_CLIENT_ID,
+        });
+        const payload = ticket.getPayload();
+        const { sub: googleId, email, name, picture } = payload;
+
+        if (!email) {
+            res.status(400);
+            throw new Error('Email not provided by Google');
+        }
+
+        // Fetch Phone & Address from People API
+        let phoneNumber = '';
+        let address = {};
+
+        try {
+            const peopleApiUrl = 'https://people.googleapis.com/v1/people/me?personFields=phoneNumbers,addresses';
+            const peopleRes = await client.request({ url: peopleApiUrl });
+            const person = peopleRes.data;
+
+            if (person.phoneNumbers && person.phoneNumbers.length > 0) {
+                phoneNumber = person.phoneNumbers[0].value;
+                console.log("✅ Found Phone Number from Google:", phoneNumber);
+            } else {
+                console.log("ℹ️  No Phone Number found in Google Account");
+            }
+
+            if (person.addresses && person.addresses.length > 0) {
+                const addr = person.addresses[0];
+                address = {
+                    street: addr.streetAddress || '',
+                    city: addr.city || '',
+                    state: addr.region || '',
+                    postalCode: addr.postalCode || '',
+                    country: addr.country || ''
+                };
+                console.log("✅ Found Address from Google:", address);
+            } else {
+                console.log("ℹ️  No Address found in Google Account");
+            }
+
+            // Log entire person object for debugging (remove in production)
+            console.log("🔍 Full People API Response:", JSON.stringify(person, null, 2));
+        } catch (peopleError) {
+            console.warn("Failed to fetch People API data:", peopleError.message);
+            // Continue login even if People API fails
+        }
+
+        // Check if user exists
+        let user = await User.findOne({
+            $or: [
+                { email },
+                { googleId }
+            ]
+        });
+
+        if (user) {
+            // Update User
+            if (!user.googleId) {
+                user.googleId = googleId;
+                user.authProvider = 'google';
+            }
+            if (!user.profilePhoto && picture) user.profilePhoto = picture;
+
+            // Only update phone/address if not already set
+            if (!user.phoneNumber && phoneNumber) user.phoneNumber = phoneNumber;
+            if (!user.address?.street && address.street) user.address = { ...user.address, ...address };
+
+            await user.save();
+
+            res.json({
+                _id: user.id,
+                name: user.name,
+                email: user.email,
+                phoneNumber: user.phoneNumber,
+                profilePhoto: user.profilePhoto,
+                address: user.address,
+                role: user.role,
+                permissions: user.permissions,
+                isFirstLogin: user.isFirstLogin,
+                token: generateToken(user._id, '30d')
+            });
+        } else {
+            // Create New User
+            user = await User.create({
+                name: name || email.split('@')[0],
+                email,
+                googleId,
+                authProvider: 'google',
+                isEmailVerified: true,
+                password: crypto.randomBytes(32).toString('hex'),
+                profilePhoto: picture || '',
+                phoneNumber: phoneNumber,
+                address: address,
+                role: 'user'
+            });
+
+            res.status(201).json({
+                _id: user.id,
+                name: user.name,
+                email: user.email,
+                phoneNumber: user.phoneNumber,
+                profilePhoto: user.profilePhoto,
+                address: user.address,
+                role: user.role,
+                permissions: user.permissions,
+                isFirstLogin: user.isFirstLogin,
+                token: generateToken(user._id, '30d')
+            });
+        }
+    } catch (error) {
+        console.error('Google OAuth error:', error);
+        res.status(400);
+        throw new Error('Google Authentication Failed: ' + error.message);
+    }
+});
+
 // @desc    Delete user account (Self)
 // @route   DELETE /api/users/profile
 // @access  Private
@@ -869,5 +1023,6 @@ module.exports = {
     updatePassword,
     sendSecurityOtp,
     sendMockPhoneOtp,
-    verifyMockPhoneOtp
+    verifyMockPhoneOtp,
+    googleAuth
 };

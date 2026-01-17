@@ -18,8 +18,8 @@ const {
     toggleTwoFactor,
     updatePassword,
     sendSecurityOtp,
-
-    deleteProfilePhoto
+    deleteProfilePhoto,
+    googleAuth
 } = require('../controllers/authController');
 const {
     getUsers,
@@ -46,6 +46,8 @@ router.post('/verify-email', verifyEmailOtp);
 // Mock Phone Verification (Dev/Free Tier Alternative)
 router.post('/send-phone-otp', require('../controllers/authController').sendMockPhoneOtp);
 router.post('/verify-phone-otp', require('../controllers/authController').verifyMockPhoneOtp);
+// Google OAuth
+router.post('/google-auth', googleAuth);
 
 
 // =======================
