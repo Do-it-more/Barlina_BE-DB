@@ -88,6 +88,10 @@ const generateReport = (res, format, filename, data, fields) => {
     }
 };
 
+const Contact = require('../models/Contact'); // Import Contact model
+
+// ... existing helpers ...
+
 // @desc    Get dashboard stats
 // @route   GET /api/reports/dashboard
 // @access  Private/Admin
@@ -99,6 +103,10 @@ const getDashboardStats = asyncHandler(async (req, res) => {
     const deliveredOrders = await Order.countDocuments({ isDelivered: true });
     const userCount = await User.countDocuments();
     const productCount = await Product.countDocuments();
+
+    // New counts for notifications
+    const openComplaintsCount = await Complaint.countDocuments({ isViewedByAdmin: false });
+    const newInquiriesCount = await Contact.countDocuments({ status: 'New' });
 
     const dailyOrders = await Order.aggregate([
         {
@@ -128,7 +136,9 @@ const getDashboardStats = asyncHandler(async (req, res) => {
         userCount,
         productCount,
         dailyOrders,
-        ordersByStatus
+        ordersByStatus,
+        openComplaintsCount,
+        newInquiriesCount
     });
 });
 

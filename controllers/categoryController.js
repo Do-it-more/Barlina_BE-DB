@@ -8,8 +8,11 @@ const getCategories = asyncHandler(async (req, res) => {
     let query = {};
 
     // If request is from an authenticated admin (not super admin), filter by assigned categories
+    // ONLY if they have specific categories assigned. If empty, assume full access.
     if (req.user && req.user.role === 'admin') {
-        query = { _id: { $in: req.user.assignedCategories } };
+        if (req.user.assignedCategories && req.user.assignedCategories.length > 0) {
+            query = { _id: { $in: req.user.assignedCategories } };
+        }
     }
 
     const categories = await Category.find(query).sort({ order: 1 });

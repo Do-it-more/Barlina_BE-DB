@@ -44,7 +44,7 @@ const userSchema = mongoose.Schema({
     },
     password: {
         type: String,
-        required: function() {
+        required: function () {
             // Password is required only if user is not using OAuth
             return !this.googleId;
         }
@@ -95,7 +95,16 @@ const userSchema = mongoose.Schema({
     wishlist: [{
         type: mongoose.Schema.Types.ObjectId,
         ref: 'Product'
-    }]
+    }],
+    // Chat online status
+    isOnline: {
+        type: Boolean,
+        default: false
+    },
+    lastSeen: {
+        type: Date,
+        default: Date.now
+    }
 }, {
     timestamps: true
 });
@@ -110,8 +119,12 @@ userSchema.pre('save', async function () {
 });
 
 // Method to compare password
+// Method to compare password
 userSchema.methods.matchPassword = async function (enteredPassword) {
     return await bcrypt.compare(enteredPassword, this.password);
 };
+
+// OPTIMIZATION: Index for Admin Search
+userSchema.index({ name: 'text', email: 'text', phoneNumber: 'text' });
 
 module.exports = mongoose.model('User', userSchema);

@@ -15,11 +15,13 @@ const {
     sendVerificationEmail,
     verifyEmailOtp,
     verifyTwoFactor,
+    resendTwoFactorLogin,
     toggleTwoFactor,
     updatePassword,
     sendSecurityOtp,
     deleteProfilePhoto,
-    googleAuth
+    googleAuth,
+    logoutUser
 } = require('../controllers/authController');
 const {
     getUsers,
@@ -59,9 +61,11 @@ router.delete('/profile', protect, deleteMyAccount);
 router.put('/profile-photo', protect, upload.single('image'), updateProfilePhoto);
 router.delete('/profile-photo', protect, deleteProfilePhoto);
 router.post('/login/2fa', verifyTwoFactor);
+router.post('/login/resend-2fa', resendTwoFactorLogin);
 router.put('/2fa', protect, toggleTwoFactor);
 router.put('/password', protect, updatePassword);
 router.post('/send-security-otp', protect, sendSecurityOtp);
+router.post('/logout', protect, logoutUser);
 
 router.get('/wishlist', protect, getWishlist);
 router.post('/wishlist/:id', protect, toggleWishlist);

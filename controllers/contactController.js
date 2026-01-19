@@ -53,4 +53,16 @@ const deleteContact = async (req, res) => {
     }
 };
 
-module.exports = { submitContact, getContacts, deleteContact };
+// @desc    Mark all new contacts as read
+// @route   PUT /api/contact/mark-read
+// @access  Private/Admin
+const markContactsRead = async (req, res) => {
+    try {
+        await Contact.updateMany({ status: 'New' }, { status: 'Read' });
+        res.json({ message: 'All contacts marked as read' });
+    } catch (error) {
+        res.status(500).json({ message: 'Server Error' });
+    }
+};
+
+module.exports = { submitContact, getContacts, deleteContact, markContactsRead };

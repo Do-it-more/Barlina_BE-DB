@@ -14,7 +14,8 @@ const {
     updateOrderStatus,
     getOrderAuditLogs,
     updateOrdersStatusBulk,
-    getOrderStats
+    getOrderStats,
+    getOrderInvoice
 } = require('../controllers/orderController');
 const { protect, admin, checkPermission } = require('../middleware/authMiddleware');
 
@@ -25,6 +26,7 @@ router.route('/create-payment-intent').post(protect, createPaymentIntent);
 router.route('/invoice/:invoiceNumber').get(protect, checkPermission('orders'), getOrderByInvoiceNumber);
 router.route('/analytics/stats').get(protect, admin, getOrderStats);
 router.route('/:id').get(protect, getOrderById);
+router.route('/:id/invoice').get(protect, getOrderInvoice);
 router.route('/:id/pay').put(protect, updateOrderToPaid);
 router.route('/:id/deliver').put(protect, checkPermission('orders'), updateOrderToDelivered);
 router.route('/:id/delivery-date').put(protect, checkPermission('orders'), updateOrderEstimatedDelivery);

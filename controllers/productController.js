@@ -2,6 +2,8 @@ const asyncHandler = require('express-async-handler');
 const Product = require('../models/Product');
 const Order = require('../models/Order');
 
+const Category = require('../models/Category');
+
 // @desc    Get all products
 // @route   GET /api/products
 // @access  Public / Scoped for Admin
@@ -15,24 +17,32 @@ const getProducts = asyncHandler(async (req, res) => {
 
     let categoryFilter = req.query.category ? { category: req.query.category } : {};
 
-    // RBAC: If request is from an authenticated admin (not super admin), MUST filter by assigned categories
+    // RBAC: Filter by assigned categories ONLY if specific categories are assigned.
+    // If no categories are assigned, we assume the Admin has global product access.
     if (req.user && req.user.role === 'admin') {
-        const assignedIds = req.user.assignedCategories.map(c => c.toString());
+        const assignedCategoryIds = req.user.assignedCategories;
 
-        // If a specific category was requested, verify it's assigned
-        if (req.query.category) {
-            if (!assignedIds.includes(req.query.category)) {
-                // Return empty if trying to access unauthorized category
-                return res.json([]);
+        if (assignedCategoryIds && assignedCategoryIds.length > 0) {
+            // Product model stores category NAME usually, but let's confirm.
+            // Earlier fix confirmed we need to map IDs to Names.
+            const allowedCategories = await Category.find({ _id: { $in: assignedCategoryIds } });
+            const allowedCategoryNames = allowedCategories.map(c => c.name);
+
+            if (req.query.category) {
+                if (!allowedCategoryNames.includes(req.query.category)) {
+                    // Return empty if trying to access unauthorized category
+                    return res.json([]);
+                }
+            } else {
+                // Restrict to allowed categories
+                categoryFilter = { category: { $in: allowedCategoryNames } };
             }
-        } else {
-            // Default: Show only assigned categories
-            categoryFilter = { category: { $in: req.user.assignedCategories } };
         }
+        // Else: No assigned categories -> View ALL products (Global Access)
     }
 
     const products = await Product.find({ ...keyword, ...categoryFilter })
-        .select('name price discountPrice image countInStock rating numReviews category isCodAvailable estimatedDeliveryDays colors specifications');
+        .select('name price discountPrice image countInStock isStockEnabled rating numReviews category isCodAvailable estimatedDeliveryDays colors specifications');
     res.json(products);
 });
 
@@ -66,7 +76,7 @@ const getProductById = asyncHandler(async (req, res) => {
 // @route   POST /api/products
 // @access  Private/Admin
 const createProduct = asyncHandler(async (req, res) => {
-    const { name, price, discountPrice, description, image, images, brand, category, countInStock, isCodAvailable, estimatedDeliveryDays, colors, specifications } = req.body;
+    const { name, price, discountPrice, description, image, images, brand, category, countInStock, isStockEnabled, isCodAvailable, estimatedDeliveryDays, colors, specifications } = req.body;
 
     const mainImage = (images && images.length > 0) ? images[0] : image;
 
@@ -79,7 +89,9 @@ const createProduct = asyncHandler(async (req, res) => {
         images: images || [mainImage],
         brand,
         category,
+        category,
         countInStock,
+        isStockEnabled: isStockEnabled !== undefined ? isStockEnabled : true,
         isCodAvailable: isCodAvailable !== undefined ? isCodAvailable : true,
         estimatedDeliveryDays: estimatedDeliveryDays || undefined,
         colors: colors || [],
@@ -152,7 +164,7 @@ const deleteProduct = asyncHandler(async (req, res) => {
 // @route   PUT /api/products/:id
 // @access  Private/Admin
 const updateProduct = asyncHandler(async (req, res) => {
-    const { name, price, discountPrice, description, image, images, brand, category, countInStock, isCodAvailable, estimatedDeliveryDays, colors, specifications } = req.body;
+    const { name, price, discountPrice, description, image, images, brand, category, countInStock, isStockEnabled, isCodAvailable, estimatedDeliveryDays, colors, specifications } = req.body;
 
     const product = await Product.findById(req.params.id);
 
@@ -181,6 +193,7 @@ const updateProduct = asyncHandler(async (req, res) => {
         product.brand = brand || product.brand;
         product.category = category || product.category;
         product.countInStock = countInStock !== undefined ? countInStock : product.countInStock; // Allow 0
+        product.isStockEnabled = isStockEnabled !== undefined ? isStockEnabled : product.isStockEnabled;
         product.returnPolicy = req.body.returnPolicy || product.returnPolicy; // Persist Return Policy
 
         const updatedProduct = await product.save();

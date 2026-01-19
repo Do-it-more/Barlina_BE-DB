@@ -39,6 +39,14 @@ const updateSettings = asyncHandler(async (req, res) => {
         settings.isChatbotEnabled = req.body.isChatbotEnabled;
     }
 
+    if (req.body.isGlobalStockActive !== undefined) {
+        settings.isGlobalStockActive = req.body.isGlobalStockActive;
+    }
+
+    if (req.body.isStockCountVisible !== undefined) {
+        settings.isStockCountVisible = req.body.isStockCountVisible;
+    }
+
     const updatedSettings = await settings.save();
     res.json(updatedSettings);
 });

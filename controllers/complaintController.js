@@ -47,7 +47,7 @@ const getComplaintById = asyncHandler(async (req, res) => {
 
     if (complaint) {
         // Ensure user owns complaint or is admin
-        if ((complaint.user && complaint.user._id.toString() === req.user._id.toString()) || req.user.role === 'admin') {
+        if ((complaint.user && complaint.user._id.toString() === req.user._id.toString()) || req.user.role === 'admin' || req.user.role === 'super_admin') {
             res.json(complaint);
         } else {
             res.status(401);
@@ -77,10 +77,37 @@ const updateComplaint = asyncHandler(async (req, res) => {
     }
 });
 
+// @desc    Delete complaint
+// @route   DELETE /api/complaints/:id
+// @access  Private/SuperAdmin
+const deleteComplaint = asyncHandler(async (req, res) => {
+    const complaint = await Complaint.findById(req.params.id);
+
+    if (complaint) {
+        if (complaint.status !== 'Closed') {
+            res.status(400);
+            throw new Error('Only Closed complaints can be deleted');
+        }
+
+        await complaint.deleteOne();
+        res.json({ message: 'Complaint removed' });
+    } else {
+        res.status(404);
+        throw new Error('Complaint not found');
+    }
+});
+
+const markComplaintsViewed = asyncHandler(async (req, res) => {
+    await Complaint.updateMany({ isViewedByAdmin: false }, { isViewedByAdmin: true });
+    res.json({ message: 'Complaints marked as viewed' });
+});
+
 module.exports = {
     createComplaint,
     getMyComplaints,
     getComplaints,
     getComplaintById,
-    updateComplaint
+    updateComplaint,
+    deleteComplaint,
+    markComplaintsViewed
 };

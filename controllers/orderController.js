@@ -6,6 +6,7 @@ const Stripe = require('stripe');
 const sendEmail = require('../utils/sendEmail');
 const AuditLog = require('../models/AuditLog');
 const ReturnRequest = require('../models/ReturnRequest');
+const Setting = require('../models/Setting');
 
 // @desc    Update order to paid
 // @route   PUT /api/orders/:id/pay
@@ -196,47 +197,75 @@ const addOrderItems = asyncHandler(async (req, res) => {
         res.status(400);
         throw new Error('No order items');
     } else {
-        // 1. Verify stock availability and Calculate Expected Delivery
         let maxDeliveryDays = 0;
+        const stockUpdatedItems = [];
 
-        for (const item of orderItems) {
-            const product = await Product.findById(item.product);
-            if (!product) {
-                res.status(404);
-                throw new Error(`Product not found: ${item.name}`);
+        try {
+            // 1. Verify Stock & Deduct Atomically
+            for (const item of orderItems) {
+                const product = await Product.findById(item.product);
+                if (!product) {
+                    res.status(404);
+                    throw new Error(`Product not found: ${item.name}`);
+                }
+
+                // Check Delivery Days
+                if (product.estimatedDeliveryDays > maxDeliveryDays) {
+                    maxDeliveryDays = product.estimatedDeliveryDays;
+                }
+
+                // CHECK AND UPDATE STOCK
+                const shouldEnforceStock = product.isStockEnabled !== false; // Default true
+
+                if (shouldEnforceStock) {
+                    // Attempt to atomically decrement stock ONLY IF sufficient stock exists
+                    const updatedProduct = await Product.findOneAndUpdate(
+                        { _id: item.product, countInStock: { $gte: item.qty } },
+                        { $inc: { countInStock: -item.qty } },
+                        { new: true }
+                    );
+
+                    if (!updatedProduct) {
+                        res.status(400);
+                        throw new Error(`Insufficient stock for ${item.name}. Stock changed during checkout.`);
+                    }
+
+                    // Track successful deduction for potential rollback
+                    stockUpdatedItems.push({ id: item.product, qty: item.qty });
+                }
             }
-            if (product.countInStock < item.qty) {
-                res.status(400);
-                throw new Error(`Insufficient stock for ${item.name}. Available: ${product.countInStock}`);
+
+            // 2. Create Order
+            const expectedDeliveryDate = new Date();
+            expectedDeliveryDate.setDate(expectedDeliveryDate.getDate() + (maxDeliveryDays || 5));
+
+            const randomStr = Math.random().toString(36).substring(2, 7).toUpperCase();
+            const invoiceNumber = `INV-${randomStr}`;
+
+            const order = new Order({
+                orderItems,
+                user: req.user._id,
+                invoiceNumber,
+                shippingAddress,
+                paymentMethod,
+                itemsPrice,
+                taxPrice,
+                shippingPrice,
+                totalPrice,
+                expectedDeliveryDate
+            });
+
+            const createdOrder = await order.save();
+            res.status(201).json(createdOrder);
+
+        } catch (error) {
+            // ROLLBACK: If any error occurs (stock check failed, or order save failed), refund the deducted stock
+            console.error("Order creation failed, rolling back stock:", error.message);
+            for (const item of stockUpdatedItems) {
+                await Product.findByIdAndUpdate(item.id, { $inc: { countInStock: item.qty } });
             }
-            if (product.estimatedDeliveryDays > maxDeliveryDays) {
-                maxDeliveryDays = product.estimatedDeliveryDays;
-            }
+            throw error; // Propagate error to asyncHandler
         }
-
-        // Calculate expected date
-        const expectedDeliveryDate = new Date();
-        expectedDeliveryDate.setDate(expectedDeliveryDate.getDate() + (maxDeliveryDays || 5)); // Default 5 if 0
-
-        // Generate Short Invoice Number: INV-XXXXX (9 chars total)
-        const randomStr = Math.random().toString(36).substring(2, 7).toUpperCase();
-        const invoiceNumber = `INV-${randomStr}`;
-
-        const order = new Order({
-            orderItems,
-            user: req.user._id,
-            invoiceNumber,
-            shippingAddress,
-            paymentMethod,
-            itemsPrice,
-            taxPrice,
-            shippingPrice,
-            totalPrice,
-            expectedDeliveryDate
-        });
-
-        const createdOrder = await order.save();
-        res.status(201).json(createdOrder);
     }
 });
 
@@ -617,90 +646,106 @@ const Complaint = require('../models/Complaint');
 // @desc    Get order statistics (Admin Dashboard)
 // @route   GET /api/orders/analytics/stats
 // @access  Private/Admin
+// @desc    Get order statistics (Admin Dashboard)
+// @route   GET /api/orders/analytics/stats
+// @access  Private/Admin
 const getOrderStats = asyncHandler(async (req, res) => {
-    // 1. Counts by Status (with Legacy Data Normalization)
-    const statusCounts = await Order.aggregate([
-        {
-            $addFields: {
-                normalizedStatus: {
-                    $cond: {
-                        if: { $ifNull: ["$status", false] },
-                        then: "$status",
-                        else: {
-                            $switch: {
-                                branches: [
-                                    { case: { $eq: ["$isCancelled", true] }, then: "CANCELLED" },
-                                    { case: { $eq: ["$isDelivered", true] }, then: "DELIVERED" },
-                                    { case: { $eq: ["$isPaid", true] }, then: "PAID" }
-                                ],
-                                default: "CREATED"
+    // console.log("[Stats] Starting getOrderStats...");
+
+    const sevenDaysAgo = new Date();
+    sevenDaysAgo.setDate(sevenDaysAgo.getDate() - 7);
+
+    const [
+        statusCountsResult,
+        dailyStats,
+        totalRevenueResult,
+        returnsPending,
+        openComplaints,
+        totalOrders,
+        recentOrders
+    ] = await Promise.all([
+        // 1. Status Counts
+        Order.aggregate([
+            {
+                $addFields: {
+                    normalizedStatus: {
+                        $cond: {
+                            if: { $ifNull: ["$status", false] },
+                            then: "$status",
+                            else: {
+                                $switch: {
+                                    branches: [
+                                        { case: { $eq: ["$isCancelled", true] }, then: "CANCELLED" },
+                                        { case: { $eq: ["$isDelivered", true] }, then: "DELIVERED" },
+                                        { case: { $eq: ["$isPaid", true] }, then: "PAID" }
+                                    ],
+                                    default: "CREATED"
+                                }
                             }
                         }
                     }
                 }
+            },
+            {
+                $group: {
+                    _id: '$normalizedStatus',
+                    count: { $sum: 1 }
+                }
             }
-        },
-        {
-            $group: {
-                _id: '$normalizedStatus',
-                count: { $sum: 1 }
+        ]),
+
+        // 2. Daily Stats
+        Order.aggregate([
+            {
+                $match: {
+                    createdAt: { $gte: sevenDaysAgo },
+                    isCancelled: false
+                }
+            },
+            {
+                $group: {
+                    _id: { $dateToString: { format: "%Y-%m-%d", date: "$createdAt" } },
+                    orders: { $sum: 1 },
+                    sales: { $sum: "$totalPrice" }
+                }
+            },
+            { $sort: { _id: 1 } }
+        ]),
+
+        // 3. Total Revenue
+        Order.aggregate([
+            {
+                $match: {
+                    isPaid: true,
+                    isCancelled: false
+                }
+            },
+            {
+                $group: {
+                    _id: null,
+                    total: { $sum: '$totalPrice' }
+                }
             }
-        }
+        ]),
+
+        // 4. Counts
+        ReturnRequest.countDocuments({ status: 'REQUESTED' }),
+        Complaint.countDocuments({ status: 'Open' }),
+        Order.countDocuments({}),
+
+        // 5. Recent Orders
+        Order.find({
+            status: { $in: ['CREATED', 'PAID', 'READY_TO_SHIP'] },
+            isCancelled: false
+        })
+            .sort({ createdAt: -1 })
+            .limit(5)
+            .select('invoiceNumber createdAt totalPrice user status')
+            .populate('user', 'name')
+            .lean() // Use lean for faster reads
     ]);
 
-    // 2. Daily Orders & Revenue (Last 7 Days)
-    const sevenDaysAgo = new Date();
-    sevenDaysAgo.setDate(sevenDaysAgo.getDate() - 7);
-
-    const dailyStats = await Order.aggregate([
-        {
-            $match: {
-                createdAt: { $gte: sevenDaysAgo },
-                isCancelled: false // Exclude cancelled from revenue charts
-            }
-        },
-        {
-            $group: {
-                _id: { $dateToString: { format: "%Y-%m-%d", date: "$createdAt" } },
-                orders: { $sum: 1 },
-                sales: { $sum: "$totalPrice" }
-            }
-        },
-        { $sort: { _id: 1 } }
-    ]);
-
-    // 3. Total Revenue (Lifetime)
-    const totalRevenue = await Order.aggregate([
-        {
-            $match: {
-                isPaid: true,
-                isCancelled: false
-            }
-        },
-        {
-            $group: {
-                _id: null,
-                total: { $sum: '$totalPrice' }
-            }
-        }
-    ]);
-
-    // 4. Operational Counts (Returns & Complaints)
-    const returnsPending = await ReturnRequest.countDocuments({ status: 'REQUESTED' });
-    const openComplaints = await Complaint.countDocuments({ status: 'Open' });
-
-    // 5. Recent Actionable Orders (For Dashboard List)
-    const recentOrders = await Order.find({
-        status: { $in: ['CREATED', 'PAID', 'READY_TO_SHIP'] },
-        isCancelled: false
-    })
-        .sort({ createdAt: -1 })
-        .limit(5)
-        .select('invoiceNumber createdAt totalPrice user status')
-        .populate('user', 'name');
-
-    // Format status counts into an easier object
-    const statusMap = statusCounts.reduce((acc, curr) => {
+    const statusMap = statusCountsResult.reduce((acc, curr) => {
         acc[curr._id] = curr.count;
         return acc;
     }, {});
@@ -708,13 +753,41 @@ const getOrderStats = asyncHandler(async (req, res) => {
     res.json({
         statusCounts: statusMap,
         dailyStats,
-        totalRevenue: totalRevenue[0]?.total || 0,
-        totalOrders: await Order.countDocuments({}),
-        // Operational Metrics
+        totalRevenue: totalRevenueResult[0]?.total || 0,
+        totalOrders,
         returnsPending,
         openComplaints,
         recentOrders
     });
+});
+
+// @desc    Download order invoice PDF
+// @route   GET /api/orders/:id/invoice
+// @access  Private
+const getOrderInvoice = asyncHandler(async (req, res) => {
+    const order = await Order.findById(req.params.id).populate('user', 'name email address city postalCode country phoneNumber');
+
+    if (order) {
+        const generateInvoicePDF = require('../utils/generateInvoice');
+        try {
+            const invoiceBuffer = await generateInvoicePDF(order, order.user);
+
+            res.set({
+                'Content-Type': 'application/pdf',
+                'Content-Disposition': `attachment; filename=invoice-${order.invoiceNumber || order._id}.pdf`,
+                'Content-Length': invoiceBuffer.length
+            });
+
+            res.send(invoiceBuffer);
+        } catch (error) {
+            console.error("Invoice Generation Error:", error);
+            res.status(500);
+            throw new Error('Failed to generate invoice PDF');
+        }
+    } else {
+        res.status(404);
+        throw new Error('Order not found');
+    }
 });
 
 module.exports = {
@@ -731,5 +804,6 @@ module.exports = {
     updateOrderStatus,
     getOrderAuditLogs,
     updateOrdersStatusBulk,
-    getOrderStats
+    getOrderStats,
+    getOrderInvoice
 };

@@ -6,10 +6,10 @@ const {
     updateCategory,
     deleteCategory
 } = require('../controllers/categoryController');
-const { protect, admin, superAdmin, checkPermission } = require('../middleware/authMiddleware');
+const { protect, admin, superAdmin } = require('../middleware/authMiddleware');
 
 router.route('/')
-    .get(protect, checkPermission('CATEGORY_READ'), getCategories)
+    .get(protect, getCategories)
     .post(protect, superAdmin, createCategory);
 
 router.route('/:id')

@@ -4,12 +4,19 @@ const Order = require('../models/Order');
 const Complaint = require('../models/Complaint');
 const Contact = require('../models/Contact');
 const ReturnRequest = require('../models/ReturnRequest');
+const sendEmail = require('../utils/sendEmail');
 
 // @desc    Get all users
 // @route   GET /api/users
 // @access  Private/Admin
 const getUsers = asyncHandler(async (req, res) => {
-    const users = await User.find({});
+    const { role } = req.query;
+    let query = {};
+    if (role) {
+        const roles = role.split(',');
+        query.role = { $in: roles };
+    }
+    const users = await User.find(query).select('-password -otp').lean();
     res.json(users);
 });
 
@@ -100,6 +107,28 @@ const createUser = asyncHandler(async (req, res) => {
     });
 
     if (user) {
+        // Send Welcome Email with Credentials (IF created by Super Admin or Admin)
+        try {
+            await sendEmail({
+                to: user.email,
+                subject: 'Welcome to the Team - Your Credentials',
+                html: `
+                    <h1>Welcome, ${user.name}!</h1>
+                    <p>Your account has been created by the Administrator.</p>
+                    <p>Here are your login credentials:</p>
+                    <ul>
+                        <li><strong>Email:</strong> ${user.email}</li>
+                        <li><strong>Password:</strong> ${password}</li>
+                    </ul>
+                    <p>Please login and change your password immediately.</p>
+                    <p><a href="${process.env.CLIENT_URL || 'http://localhost:5173'}/login">Login Here</a></p>
+                `
+            });
+        } catch (error) {
+            console.error("Failed to send welcome email:", error);
+            // Don't fail the request, just log it
+        }
+
         res.status(201).json({
             _id: user._id,
             name: user.name,

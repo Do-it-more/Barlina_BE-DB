@@ -1,7 +1,8 @@
 const PDFDocument = require('pdfkit');
+const bwipjs = require('bwip-js');
 
 const generateInvoicePDF = (order, user) => {
-    return new Promise((resolve, reject) => {
+    return new Promise(async (resolve, reject) => {
         try {
             const doc = new PDFDocument({ margin: 50 });
             const buffers = [];
@@ -12,14 +13,31 @@ const generateInvoicePDF = (order, user) => {
                 resolve(pdfData);
             });
 
+            // --- Barcode Generation ---
+            try {
+                const barcodeBuffer = await bwipjs.toBuffer({
+                    bcid: 'code128',       // Barcode type
+                    text: order.invoiceNumber || order._id.toString(),    // Text to encode
+                    scale: 3,              // 3x scaling factor
+                    height: 10,            // Bar height, in millimeters
+                    includetext: false,    // Show human-readable text
+                    textxalign: 'center',  // Always good to set this
+                });
+
+                // Place Barcode at Top Right
+                doc.image(barcodeBuffer, 400, 50, { width: 150 });
+            } catch (e) {
+                console.error("Barcode generation failed", e);
+            }
+
             // --- Header ---
             doc
                 .fillColor('#444444')
                 .fontSize(20)
-                .text('BARLINA FASHION DESIGN', 110, 57)
+                .text('BARLINA FASHION DESIGN', 50, 57)
                 .fontSize(10)
-                .text('123 Fashion Street', 200, 65, { align: 'right' })
-                .text('Chennai, TN, 600017', 200, 80, { align: 'right' })
+                .text('123 Fashion Street', 50, 80)
+                .text('Chennai, TN, 600017', 50, 95)
                 .moveDown();
 
             // --- Invoice Info ---
@@ -98,10 +116,13 @@ const generateInvoicePDF = (order, user) => {
             doc.text(`Payment Date: ${new Date(order.paidAt || Date.now()).toLocaleString()}`, 50, subtotalPosition + 85);
 
             // --- Footer ---
+            const footerY = subtotalPosition + 110;
             doc
                 .font('Helvetica')
                 .fontSize(10)
-                .text('Thank you.', 50, 700, { align: 'center', width: 500 });
+                .text('Thank you.', 50, footerY, { align: 'center', width: 500 });
+
+
 
             doc.end();
 

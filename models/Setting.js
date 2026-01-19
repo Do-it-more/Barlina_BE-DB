@@ -16,6 +16,14 @@ const settingSchema = mongoose.Schema({
     isChatbotEnabled: {
         type: Boolean,
         default: true
+    },
+    isGlobalStockActive: {
+        type: Boolean,
+        default: true
+    },
+    isStockCountVisible: {
+        type: Boolean,
+        default: true
     }
 }, {
     timestamps: true

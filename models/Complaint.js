@@ -33,6 +33,10 @@ const complaintSchema = mongoose.Schema({
     },
     adminResponse: {
         type: String
+    },
+    isViewedByAdmin: {
+        type: Boolean,
+        default: false
     }
 }, {
     timestamps: true

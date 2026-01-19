@@ -51,7 +51,12 @@ const productSchema = mongoose.Schema({
     countInStock: {
         type: Number,
         required: true,
-        default: 0
+        default: 0,
+        min: [0, 'Stock cannot be negative']
+    },
+    isStockEnabled: {
+        type: Boolean,
+        default: true
     },
     rating: {
         type: Number,
@@ -107,5 +112,12 @@ const productSchema = mongoose.Schema({
 }, {
     timestamps: true
 });
+
+// OPTIMIZATION: Indexes for faster search and filtering
+productSchema.index({ name: 'text', description: 'text', brand: 'text' }); // Full-Text Search
+productSchema.index({ category: 1 }); // Filter by Category
+productSchema.index({ price: 1 });    // Sort/Filter by Price
+productSchema.index({ rating: -1 });  // Sort by Rating (High to Low)
+productSchema.index({ createdAt: -1 }); // Sort by Newest
 
 module.exports = mongoose.model('Product', productSchema);
