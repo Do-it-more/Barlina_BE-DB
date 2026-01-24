@@ -21,7 +21,8 @@ const {
     sendSecurityOtp,
     deleteProfilePhoto,
     googleAuth,
-    logoutUser
+    logoutUser,
+    updatePhone
 } = require('../controllers/authController');
 const {
     getUsers,
@@ -66,6 +67,7 @@ router.put('/2fa', protect, toggleTwoFactor);
 router.put('/password', protect, updatePassword);
 router.post('/send-security-otp', protect, sendSecurityOtp);
 router.post('/logout', protect, logoutUser);
+router.put('/update-phone', protect, updatePhone);  // Phone verification for Google OAuth users
 
 router.get('/wishlist', protect, getWishlist);
 router.post('/wishlist/:id', protect, toggleWishlist);

@@ -157,21 +157,15 @@ const sendMessage = async (req, res) => {
         // Socket IO emission
         if (req.io) {
             const roomId = targetChatId.toString();
-            console.log('[Socket] Emitting message to rooms:', {
-                chatRoom: roomId,
-                adminGlobal: 'admin_global',
+            console.log('[Socket] Emitting message to chat members:', {
+                chatId: roomId,
                 memberRooms: updatedChat.members
                     .filter(m => m.user?._id.toString() !== req.user._id.toString())
                     .map(m => m.user._id.toString())
             });
 
-            // 1. Emit to the Chat Room (Primary)
-            req.io.to(roomId).emit('receive_message', fullMessage);
-
-            // 2. Global Broadcast (Fail-safe)
-            req.io.to('admin_global').emit('receive_message', fullMessage);
-
-            // 3. Emit to Each Member's Personal Room (Redundancy/Notification)
+            // Emit to Each Member's Personal Room (excluding sender)
+            // This is the most reliable method as each user has their own room
             updatedChat.members.forEach(member => {
                 if (member.user && member.user._id.toString() !== req.user._id.toString()) {
                     req.io.to(member.user._id.toString()).emit('receive_message', fullMessage);
@@ -266,25 +260,41 @@ const clearChat = async (req, res) => {
 const deleteMessage = async (req, res) => {
     try {
         const messageId = req.params.id;
-        const { global } = req.body; // If true & SA, hard delete
+        const { global } = req.body; // If true, delete for everyone
 
-        const message = await AdminMessage.findById(messageId);
+        const message = await AdminMessage.findById(messageId).populate('chat');
         if (!message) return res.status(404).json({ message: 'Message not found' });
 
-        // SuperAdmin Global Delete
-        if (global && req.user.role === 'super_admin') {
+        const isMyMessage = message.sender.toString() === req.user._id.toString();
+        const iAmSuperAdmin = req.user.role === 'super_admin';
+
+        // Delete for Everyone - Allowed if: 1) It's my message OR 2) I'm SuperAdmin
+        if (global && (isMyMessage || iAmSuperAdmin)) {
             message.isDeletedGlobally = true;
             message.content = ""; // Wipe content
             message.fileUrl = null;
             await message.save();
-            // Emit update via socket
-            if (req.io) {
-                req.io.to(message.chat.toString()).emit('message_update', message);
+
+            // Re-fetch with populated sender for proper frontend display
+            const populatedMessage = await AdminMessage.findById(messageId)
+                .populate('sender', 'name profilePhoto role');
+
+            // Emit to all chat members via socket
+            if (req.io && message.chat) {
+                const chat = await AdminChat.findById(message.chat._id || message.chat).populate('members.user');
+                if (chat) {
+                    // Notify all members about the deletion
+                    chat.members.forEach(member => {
+                        if (member.user) {
+                            req.io.to(member.user._id.toString()).emit('message_update', populatedMessage);
+                        }
+                    });
+                }
             }
-            return res.json(message);
+            return res.json(populatedMessage);
         }
 
-        // Admin Soft Delete (Add to deletedFor)
+        // Delete for Me only (Soft Delete - Add to deletedFor)
         if (!message.deletedFor.includes(req.user._id)) {
             message.deletedFor.push(req.user._id);
             await message.save();

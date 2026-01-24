@@ -56,7 +56,7 @@ const userSchema = mongoose.Schema({
     },
     role: {
         type: String,
-        enum: ['user', 'admin', 'super_admin'],
+        enum: ['user', 'admin', 'super_admin', 'seller', 'finance'],
         default: 'user'
     },
     permissions: {
@@ -68,7 +68,8 @@ const userSchema = mongoose.Schema({
         products: { type: Boolean, default: false },
         categories: { type: Boolean, default: false },
         coupons: { type: Boolean, default: false },
-        settings: { type: Boolean, default: false }
+        settings: { type: Boolean, default: false },
+        finance: { type: Boolean, default: false }
     },
     assignedCategories: [{
         type: mongoose.Schema.Types.ObjectId,

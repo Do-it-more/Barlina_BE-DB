@@ -601,8 +601,11 @@ const deleteProfilePhoto = asyncHandler(async (req, res) => {
             _id: updatedUser._id,
             name: updatedUser.name,
             email: updatedUser.email,
+            phoneNumber: updatedUser.phoneNumber,
             profilePhoto: updatedUser.profilePhoto,
             address: updatedUser.address,
+            role: updatedUser.role,
+            permissions: updatedUser.permissions,
             token: generateToken(updatedUser._id),
         });
     } else {
@@ -632,7 +635,11 @@ const updateProfilePhoto = asyncHandler(async (req, res) => {
             _id: updatedUser._id,
             name: updatedUser.name,
             email: updatedUser.email,
+            phoneNumber: updatedUser.phoneNumber,
             profilePhoto: updatedUser.profilePhoto,
+            address: updatedUser.address,
+            role: updatedUser.role,
+            permissions: updatedUser.permissions,
             token: generateToken(updatedUser._id),
         });
     } else {
@@ -1019,6 +1026,9 @@ const googleAuth = asyncHandler(async (req, res) => {
 
             await user.save();
 
+            // Check if phone verification is required
+            const needsPhoneVerification = !user.phoneNumber || user.phoneNumber.trim() === '';
+
             res.json({
                 _id: user.id,
                 name: user.name,
@@ -1029,6 +1039,7 @@ const googleAuth = asyncHandler(async (req, res) => {
                 role: user.role,
                 permissions: user.permissions,
                 isFirstLogin: user.isFirstLogin,
+                phoneVerificationRequired: needsPhoneVerification,
                 token: generateToken(user._id, '30d')
             });
         } else {
@@ -1046,6 +1057,9 @@ const googleAuth = asyncHandler(async (req, res) => {
                 role: 'user'
             });
 
+            // Check if phone verification is required for new user
+            const needsPhoneVerification = !user.phoneNumber || user.phoneNumber.trim() === '';
+
             res.status(201).json({
                 _id: user.id,
                 name: user.name,
@@ -1056,6 +1070,7 @@ const googleAuth = asyncHandler(async (req, res) => {
                 role: user.role,
                 permissions: user.permissions,
                 isFirstLogin: user.isFirstLogin,
+                phoneVerificationRequired: needsPhoneVerification,
                 token: generateToken(user._id, '30d')
             });
         }
@@ -1111,6 +1126,67 @@ const generateToken = (id, expiresIn = '30d') => {
     });
 };
 
+// @desc    Update phone number with Firebase verification
+// @route   PUT /api/users/update-phone
+// @access  Private
+const updatePhone = asyncHandler(async (req, res) => {
+    const { phoneNumber, firebaseToken } = req.body;
+
+    if (!phoneNumber || !firebaseToken) {
+        res.status(400);
+        throw new Error('Phone number and verification token are required');
+    }
+
+    const user = await User.findById(req.user._id);
+
+    if (!user) {
+        res.status(404);
+        throw new Error('User not found');
+    }
+
+    // Verify Firebase ID Token
+    try {
+        if (admin.apps.length) {
+            const decodedToken = await admin.auth().verifyIdToken(firebaseToken);
+            const verifiedPhoneNumber = decodedToken.phone_number;
+
+            // Validate phone number matches
+            const normalizedInput = phoneNumber.replace(/\D/g, '');
+            if (!verifiedPhoneNumber || !verifiedPhoneNumber.includes(normalizedInput)) {
+                res.status(400);
+                throw new Error(`Phone number mismatch. Please try again.`);
+            }
+
+            console.log(`✅ Phone verified for user ${user.email}: ${verifiedPhoneNumber}`);
+        } else {
+            // DEV MODE: Firebase Admin not initialized
+            console.warn("⚠️ DEV MODE: Firebase Admin not initialized. Skipping backend phone token verification.");
+        }
+    } catch (firebaseError) {
+        console.error("Firebase token verification failed:", firebaseError);
+        res.status(400);
+        throw new Error('Phone verification failed: ' + firebaseError.message);
+    }
+
+    // Update phone number
+    user.phoneNumber = phoneNumber;
+    user.isPhoneVerified = true;
+    const updatedUser = await user.save();
+
+    res.json({
+        _id: updatedUser._id,
+        name: updatedUser.name,
+        email: updatedUser.email,
+        phoneNumber: updatedUser.phoneNumber,
+        profilePhoto: updatedUser.profilePhoto,
+        address: updatedUser.address,
+        role: updatedUser.role,
+        permissions: updatedUser.permissions,
+        isPhoneVerified: updatedUser.isPhoneVerified,
+        token: generateToken(updatedUser._id)
+    });
+});
+
 module.exports = {
     registerUser,
     loginUser,
@@ -1134,5 +1210,6 @@ module.exports = {
     sendMockPhoneOtp,
     verifyMockPhoneOtp,
     googleAuth,
-    logoutUser
+    logoutUser,
+    updatePhone
 };

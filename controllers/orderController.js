@@ -7,19 +7,29 @@ const sendEmail = require('../utils/sendEmail');
 const AuditLog = require('../models/AuditLog');
 const ReturnRequest = require('../models/ReturnRequest');
 const Setting = require('../models/Setting');
+const FinancialRecord = require('../models/FinancialRecord');
+
+// Get frontend URL from environment or default to localhost
+const FRONTEND_URL = process.env.FRONTEND_URL || 'http://localhost:5173';
 
 // @desc    Update order to paid
 // @route   PUT /api/orders/:id/pay
 // @access  Private
 const updateOrderToPaid = asyncHandler(async (req, res) => {
-    // ... same as before ...
-    const order = await Order.findById(req.params.id).populate('user', 'email name');
+    const order = await Order.findById(req.params.id).populate('user', 'email name phoneNumber');
 
     if (order) {
         if (order.isPaid) {
             res.status(400);
             throw new Error('Order is already marked as paid');
         }
+
+        // Generate invoice number ONLY after payment is successful
+        if (!order.invoiceNumber) {
+            const randomStr = Math.random().toString(36).substring(2, 7).toUpperCase();
+            order.invoiceNumber = `INV-${randomStr}`;
+        }
+
         order.isPaid = true;
         order.status = 'PAID';
         order.paidAt = Date.now();
@@ -30,7 +40,7 @@ const updateOrderToPaid = asyncHandler(async (req, res) => {
             statusTo: 'PAID',
             action: 'PAYMENT_RECEIVED',
             performedBy: {
-                id: req.user._id, // Might be system or user relying on context
+                id: req.user._id,
                 name: req.user.name || 'System',
                 role: 'system'
             },
@@ -72,7 +82,7 @@ const updateOrderToPaid = asyncHandler(async (req, res) => {
 
                         <p>You can track your order status by clicking the button below:</p>
                         <p style="margin-top: 20px;">
-                            <a href="http://localhost:5173/order/${updatedOrder._id}" style="background-color: #4F46E5; color: white; padding: 10px 20px; text-decoration: none; border-radius: 5px; display: inline-block;">View Order</a>
+                            <a href="${FRONTEND_URL}/order/${updatedOrder._id}" style="background-color: #4F46E5; color: white; padding: 10px 20px; text-decoration: none; border-radius: 5px; display: inline-block;">View Order</a>
                         </p>
 
                         <p style="color: #666; font-size: 12px; margin-top: 30px;">
@@ -134,7 +144,27 @@ const cancelOrder = asyncHandler(async (req, res) => {
             reason: req.body.reason || 'User/Admin requested cancellation'
         });
 
+
+
         const updatedOrder = await order.save();
+
+        // --- CREATE FINANCIAL RECORD FOR REFUND (If Paid) ---
+        if (order.isPaid) {
+            await FinancialRecord.create({
+                type: 'REFUND',
+                category: 'Order Cancellation',
+                amount: order.totalPrice,
+                description: `Full Refund for Cancelled Order: ${order.invoiceNumber || order._id}`,
+                date: Date.now(),
+                reference: {
+                    model: 'Order',
+                    id: order._id
+                },
+                paymentMethod: order.paymentMethod || 'Online',
+                status: 'COMPLETED',
+                createdBy: req.user._id
+            });
+        }
 
         // Restore Stock
         const stockRestoration = order.orderItems.map(async (item) => {
@@ -235,17 +265,14 @@ const addOrderItems = asyncHandler(async (req, res) => {
                 }
             }
 
-            // 2. Create Order
+            // 2. Create Order (invoice number will be generated after payment)
             const expectedDeliveryDate = new Date();
             expectedDeliveryDate.setDate(expectedDeliveryDate.getDate() + (maxDeliveryDays || 5));
-
-            const randomStr = Math.random().toString(36).substring(2, 7).toUpperCase();
-            const invoiceNumber = `INV-${randomStr}`;
 
             const order = new Order({
                 orderItems,
                 user: req.user._id,
-                invoiceNumber,
+                // invoiceNumber is NOT set here - it will be generated after payment
                 shippingAddress,
                 paymentMethod,
                 itemsPrice,
@@ -256,6 +283,10 @@ const addOrderItems = asyncHandler(async (req, res) => {
             });
 
             const createdOrder = await order.save();
+
+            // NOTE: Email is NOT sent here. It will be sent ONLY after payment is successful.
+            // Invoice number is also generated after payment, not at order creation.
+
             res.status(201).json(createdOrder);
 
         } catch (error) {
@@ -380,7 +411,7 @@ const updateOrderToDelivered = asyncHandler(async (req, res) => {
                             <p>We hope you love your purchase. If you have any feedback or issues, please don't hesitate to reach out.</p>
 
                             <p style="margin-top: 20px;">
-                                <a href="http://localhost:5173/order/${updatedOrder._id}" style="background-color: #4F46E5; color: white; padding: 10px 20px; text-decoration: none; border-radius: 5px;">View Order Details</a>
+                                <a href="${FRONTEND_URL}/order/${updatedOrder._id}" style="background-color: #4F46E5; color: white; padding: 10px 20px; text-decoration: none; border-radius: 5px;">View Order Details</a>
                             </p>
 
                             <p style="color: #666; font-size: 12px; margin-top: 30px;">
@@ -494,7 +525,7 @@ const updateOrderStatus = asyncHandler(async (req, res) => {
                             ` : ''}
 
                             <p style="margin-top: 20px;">
-                                <a href="http://localhost:5173/order/${order._id}" style="background-color: #F59E0B; color: white; padding: 10px 20px; text-decoration: none; border-radius: 5px;">Track Order</a>
+                                <a href="${FRONTEND_URL}/order/${order._id}" style="background-color: #F59E0B; color: white; padding: 10px 20px; text-decoration: none; border-radius: 5px;">Track Order</a>
                             </p>
                         </div>
                     `

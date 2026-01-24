@@ -47,6 +47,15 @@ const admin = (req, res, next) => {
     }
 };
 
+const finance = (req, res, next) => {
+    if (req.user && (req.user.role === 'finance' || req.user.role === 'super_admin')) {
+        next();
+    } else {
+        res.status(403);
+        throw new Error('Not authorized as finance department');
+    }
+};
+
 const superAdmin = (req, res, next) => {
     if (req.user && req.user.role === 'super_admin') {
         next();
@@ -72,4 +81,4 @@ const checkPermission = (permission) => (req, res, next) => {
     }
 };
 
-module.exports = { protect, admin, superAdmin, checkPermission };
+module.exports = { protect, admin, superAdmin, checkPermission, finance };

@@ -8,7 +8,8 @@ const orderSchema = mongoose.Schema({
     },
     invoiceNumber: {
         type: String,
-        unique: true
+        unique: true,
+        sparse: true  // Allows null/undefined values - invoice number generated ONLY after payment
     },
     orderItems: [{
         name: { type: String, required: true },

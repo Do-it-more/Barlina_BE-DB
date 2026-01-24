@@ -21,6 +21,10 @@ const couponSchema = mongoose.Schema({
     isActive: {
         type: Boolean,
         default: true
+    },
+    showInBanner: {
+        type: Boolean,
+        default: true  // Show in Flash Deals banner by default
     }
 }, {
     timestamps: true

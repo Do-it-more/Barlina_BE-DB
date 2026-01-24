@@ -141,9 +141,12 @@ app.use('/api/complaints', require('./routes/complaintRoutes'));
 app.use('/api/coupons', require('./routes/couponRoutes'));
 app.use('/api/contact', require('./routes/contactRoutes'));
 app.use('/api/settings', require('./routes/settingsRoutes'));
+app.use('/api/sellers', require('./routes/sellerRoutes'));
 app.use('/api/admin/management', require('./routes/adminManagementRoutes'));
 app.use('/api/test-email', require('./routes/testEmailRoute'));
 app.use('/api/returns', require('./routes/returnRoutes'));
+app.use('/api/payments', require('./routes/paymentRoutes')); // Cashfree Payment Gateway
+app.use('/api/finance', require('./routes/financialRoutes')); // Financial Department Records
 app.get('/', (req, res) => {
     res.send('API is running...');
 });

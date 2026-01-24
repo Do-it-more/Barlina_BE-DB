@@ -24,6 +24,10 @@ const settingSchema = mongoose.Schema({
     isStockCountVisible: {
         type: Boolean,
         default: true
+    },
+    isSpecialOffersEnabled: {
+        type: Boolean,
+        default: true  // Flash Deals / Coupon section visibility
     }
 }, {
     timestamps: true

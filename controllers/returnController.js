@@ -5,6 +5,10 @@ const Product = require('../models/Product');
 const ReturnRequest = require('../models/ReturnRequest');
 const AuditLog = require('../models/AuditLog');
 const Setting = require('../models/Setting');
+const FinancialRecord = require('../models/FinancialRecord');
+
+// Get frontend URL from environment or default to localhost
+const FRONTEND_URL = process.env.FRONTEND_URL || 'http://localhost:5173';
 
 // @desc    Calculate return eligibility for all items in an order
 // @route   GET /api/orders/:id/return-eligibility
@@ -271,6 +275,24 @@ const updateReturnStatus = asyncHandler(async (req, res) => {
         note: `Return status updated to ${status}`
     });
 
+    // --- CREATE FINANCIAL RECORD FOR REFUND ---
+    if (status === 'REFUNDED') {
+        await FinancialRecord.create({
+            type: 'REFUND',
+            category: 'Product Return',
+            amount: returnReq.refundAmount || 0, // Ensure refundAmount is set
+            description: `Refund for Item: ${returnReq.orderItem.name} (Order: ${order.invoiceNumber || order._id})`,
+            date: Date.now(),
+            reference: {
+                model: 'ReturnRequest',
+                id: returnReq._id
+            },
+            paymentMethod: 'Other', // Or derive from order
+            status: 'COMPLETED',
+            createdBy: req.user._id
+        });
+    }
+
     // --- SEND EMAIL NOTIFICATIONS ---
     if (status === 'APPROVED') {
         try {
@@ -297,7 +319,7 @@ const updateReturnStatus = asyncHandler(async (req, res) => {
                         ${adminNote ? `<p><strong>Admin Note:</strong> ${adminNote}</p>` : ''}
                         
                         <p style="margin-top: 20px;">
-                            <a href="http://localhost:5173/profile" style="background-color: #10B981; color: white; padding: 10px 20px; text-decoration: none; border-radius: 5px;">View Return Status</a>
+                            <a href="${FRONTEND_URL}/profile" style="background-color: #10B981; color: white; padding: 10px 20px; text-decoration: none; border-radius: 5px;">View Return Status</a>
                         </p>
                     </div>
                 `

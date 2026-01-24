@@ -79,15 +79,38 @@ const deleteCoupon = asyncHandler(async (req, res) => {
 
 
 
-// @desc    Get all active coupons
+// @desc    Get all active coupons for banner display
 // @route   GET /api/coupons/active
 // @access  Public
 const getActiveCoupons = asyncHandler(async (req, res) => {
     const coupons = await Coupon.find({
         isActive: true,
+        showInBanner: true,  // Only show coupons marked for banner display
         expiryDate: { $gt: new Date() }
     }).select('code discountPercentage expiryDate'); // Only send necessary fields
     res.json(coupons);
+});
+
+// @desc    Update a coupon
+// @route   PUT /api/coupons/:id
+// @access  Private/Admin
+const updateCoupon = asyncHandler(async (req, res) => {
+    const coupon = await Coupon.findById(req.params.id);
+
+    if (!coupon) {
+        res.status(404);
+        throw new Error('Coupon not found');
+    }
+
+    // Update fields if provided
+    if (req.body.code !== undefined) coupon.code = req.body.code;
+    if (req.body.discountPercentage !== undefined) coupon.discountPercentage = req.body.discountPercentage;
+    if (req.body.expiryDate !== undefined) coupon.expiryDate = req.body.expiryDate;
+    if (req.body.isActive !== undefined) coupon.isActive = req.body.isActive;
+    if (req.body.showInBanner !== undefined) coupon.showInBanner = req.body.showInBanner;
+
+    const updatedCoupon = await coupon.save();
+    res.json(updatedCoupon);
 });
 
 module.exports = {
@@ -95,5 +118,6 @@ module.exports = {
     validateCoupon,
     getCoupons,
     deleteCoupon,
-    getActiveCoupons
+    getActiveCoupons,
+    updateCoupon
 };

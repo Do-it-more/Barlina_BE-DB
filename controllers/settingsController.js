@@ -47,6 +47,10 @@ const updateSettings = asyncHandler(async (req, res) => {
         settings.isStockCountVisible = req.body.isStockCountVisible;
     }
 
+    if (req.body.isSpecialOffersEnabled !== undefined) {
+        settings.isSpecialOffersEnabled = req.body.isSpecialOffersEnabled;
+    }
+
     const updatedSettings = await settings.save();
     res.json(updatedSettings);
 });
