@@ -1,8 +1,15 @@
 const SibApiV3Sdk = require('sib-api-v3-sdk');
 
+
+const Setting = require('../models/Setting');
+
 const sendEmail = async ({ to, subject, html, attachments = [] }) => {
     try {
         console.log(`[Email Service] Attempting to send email to: ${to}`);
+
+        // Fetch company settings
+        const settings = await Setting.findOne();
+        const companyName = settings?.companyName || "Barlina Support";
 
         // Configure API key authorization: api-key
         const defaultClient = SibApiV3Sdk.ApiClient.instance;
@@ -21,7 +28,7 @@ const sendEmail = async ({ to, subject, html, attachments = [] }) => {
         sendSmtpEmail.htmlContent = html;
         // Use a default sender if not provided
         const senderEmail = process.env.EMAIL_FROM || "no-reply@example.com";
-        const senderName = "Barlina Support";
+        const senderName = companyName;
 
         sendSmtpEmail.sender = { name: senderName, email: senderEmail };
         sendSmtpEmail.to = [{ email: to }];

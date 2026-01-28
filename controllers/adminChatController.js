@@ -18,12 +18,31 @@ const getChats = async (req, res) => {
             .sort({ lastMessageAt: -1 });
 
         // Transform for UI: Calculate unread counts, correct names etc.
-        const formattedChats = chats.map(chat => {
+        const formattedChats = chats.reduce((acc, chat) => {
             const chatObj = chat.toObject();
+            const myMemberData = chat.members.find(m => m.user?._id.toString() === req.user._id.toString());
+
+            // FILTER: If I cleared this chat AND there have been no new messages since, hide it.
+            // Exception: If it's a group chat, we usually keep it unless left? 
+            // The deleteChat logic for groups removes the user from members, so they wouldn't be found by .find() above anyway.
+            // So this logic mainly applies to private chats where we soft-delete via clearedAt.
+            if (myMemberData?.clearedAt && chat.lastMessageAt) {
+                const clearedTime = new Date(myMemberData.clearedAt).getTime();
+                const lastMsgTime = new Date(chat.lastMessageAt).getTime();
+
+                // If cleared AFTER the last message, don't show it (it's effectively empty for me)
+                // Add a small buffer (e.g. 1000ms) to avoid race conditions where they are equal
+                if (clearedTime >= lastMsgTime) {
+                    return acc; // Skip adding to list
+                }
+            } else if (myMemberData?.clearedAt && !chat.lastMessageAt) {
+                // Cleared and never had a message (or empty), hide it
+                return acc;
+            }
 
             // For Private chats, figure out the "Other" user's name/photo
             if (chat.type === 'private') {
-                const otherMember = chat.members.find(m => m.user._id.toString() !== req.user._id.toString());
+                const otherMember = chat.members.find(m => m.user?._id.toString() !== req.user._id.toString());
                 if (otherMember && otherMember.user) {
                     chatObj.chatName = otherMember.user.name;
                     chatObj.chatAvatar = otherMember.user.profilePhoto;
@@ -38,8 +57,9 @@ const getChats = async (req, res) => {
                 chatObj.chatAvatar = chat.groupAvatar;
             }
 
-            return chatObj;
-        });
+            acc.push(chatObj);
+            return acc;
+        }, []);
 
         res.json(formattedChats);
     } catch (error) {

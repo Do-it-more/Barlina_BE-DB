@@ -8,8 +8,8 @@ const orderSchema = mongoose.Schema({
     },
     invoiceNumber: {
         type: String,
-        unique: true,
-        sparse: true  // Allows null/undefined values - invoice number generated ONLY after payment
+        // unique and sparse removed to prevent E11000 index clashes on null/undefined values
+        // Uniqueness is practically handled by the INV-RANDOM generator in controller
     },
     orderItems: [{
         name: { type: String, required: true },

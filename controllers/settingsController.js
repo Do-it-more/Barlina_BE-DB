@@ -16,40 +16,32 @@ const getSettings = asyncHandler(async (req, res) => {
 // @route   PUT /api/settings
 // @access  Private/Admin
 const updateSettings = asyncHandler(async (req, res) => {
-    const { isCodAvailable, defaultEstimatedDeliveryDays } = req.body;
-
     let settings = await Setting.findOne();
     if (!settings) {
-        settings = await Setting.create({ isCodAvailable: true, defaultEstimatedDeliveryDays: 5 });
+        settings = await Setting.create({});
     }
 
-    if (isCodAvailable !== undefined) {
-        settings.isCodAvailable = isCodAvailable;
-    }
+    const fieldsToUpdate = [
+        'isCodAvailable', 'defaultEstimatedDeliveryDays',
+        'areReturnsActive', 'isChatbotEnabled', 'isGlobalStockActive',
+        'isStockCountVisible', 'isSpecialOffersEnabled',
+        'companyName', 'companyEmail', 'companyPhone', 'companyAddress',
+        'companyGST', 'companyPAN',
+        'currency', 'emailNotifications', 'lowBalanceAlert', 'lowBalanceThreshold',
+        'paymentGateways',
+        'gstEnabled', 'gstRate', 'tdsEnabled', 'tdsRate', 'shippingCharge', 'freeShippingThreshold'
+    ];
 
-    if (defaultEstimatedDeliveryDays !== undefined) {
-        settings.defaultEstimatedDeliveryDays = defaultEstimatedDeliveryDays;
-    }
-
-    if (req.body.areReturnsActive !== undefined) {
-        settings.areReturnsActive = req.body.areReturnsActive;
-    }
-
-    if (req.body.isChatbotEnabled !== undefined) {
-        settings.isChatbotEnabled = req.body.isChatbotEnabled;
-    }
-
-    if (req.body.isGlobalStockActive !== undefined) {
-        settings.isGlobalStockActive = req.body.isGlobalStockActive;
-    }
-
-    if (req.body.isStockCountVisible !== undefined) {
-        settings.isStockCountVisible = req.body.isStockCountVisible;
-    }
-
-    if (req.body.isSpecialOffersEnabled !== undefined) {
-        settings.isSpecialOffersEnabled = req.body.isSpecialOffersEnabled;
-    }
+    fieldsToUpdate.forEach(field => {
+        if (req.body[field] !== undefined) {
+            // Prevent negative values for specific numeric fields
+            if (['gstRate', 'tdsRate', 'shippingCharge', 'freeShippingThreshold'].includes(field)) {
+                settings[field] = Math.max(0, req.body[field]);
+            } else {
+                settings[field] = req.body[field];
+            }
+        }
+    });
 
     const updatedSettings = await settings.save();
     res.json(updatedSettings);

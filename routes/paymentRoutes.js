@@ -2,18 +2,24 @@ const express = require('express');
 const router = express.Router();
 const { protect } = require('../middleware/authMiddleware');
 const {
-    createCashfreeOrder,
-    verifyCashfreePayment,
-    cashfreeWebhook,
-    getPaymentStatus
-} = require('../controllers/cashfreeController');
+    createOrder,
+    verifyPayment,
+    getPaymentConfig
+} = require('../controllers/paymentController');
 
-// Protected routes
-router.post('/cashfree/create-order', protect, createCashfreeOrder);
-router.post('/cashfree/verify', protect, verifyCashfreePayment);
+const { cashfreeWebhook, getPaymentStatus } = require('../controllers/cashfreeController');
+const { instamojoWebhook } = require('../controllers/instamojoController');
+
+// Unified Payment Routes
+router.post('/create-order', protect, createOrder);
+router.post('/verify', protect, verifyPayment);
+router.get('/config', protect, getPaymentConfig);
+
+// Specific Status Check
 router.get('/cashfree/status/:orderId', protect, getPaymentStatus);
 
-// Webhook (public, but signature verified)
+// Webhooks (Public)
 router.post('/cashfree/webhook', cashfreeWebhook);
+router.post('/instamojo/webhook', instamojoWebhook);
 
 module.exports = router;

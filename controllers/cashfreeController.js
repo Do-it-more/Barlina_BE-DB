@@ -1,26 +1,32 @@
 const Order = require('../models/Order');
-const crypto = require('crypto');
+const Setting = require('../models/Setting');
 const axios = require('axios');
 
-// Cashfree API Base URLs
-const CASHFREE_BASE_URL = process.env.NODE_ENV === 'production'
-    ? 'https://api.cashfree.com/pg'
-    : 'https://sandbox.cashfree.com/pg';
+// Helper to get Cashfree Config
+const getCashfreeConfig = async () => {
+    const settings = await Setting.findOne();
+    const config = settings?.paymentGateways?.cashfree;
 
-// Helper to make Cashfree API calls
-const cashfreeApi = axios.create({
-    baseURL: CASHFREE_BASE_URL,
-    headers: {
-        'Content-Type': 'application/json',
-        'x-api-version': '2023-08-01'
+    // Fallback to env if not in DB (backward compatibility)
+    if (!config || !config.appId) {
+        if (process.env.CASHFREE_APP_ID) {
+            return {
+                appId: process.env.CASHFREE_APP_ID,
+                secretKey: process.env.CASHFREE_SECRET_KEY,
+                isProduction: process.env.NODE_ENV === 'production',
+                baseUrl: process.env.NODE_ENV === 'production' ? 'https://api.cashfree.com/pg' : 'https://sandbox.cashfree.com/pg'
+            }
+        }
+        throw new Error('Cashfree configuration missing');
     }
-});
 
-// Add auth headers dynamically
-const getCashfreeHeaders = () => ({
-    'x-client-id': process.env.CASHFREE_APP_ID,
-    'x-client-secret': process.env.CASHFREE_SECRET_KEY
-});
+    return {
+        appId: config.appId,
+        secretKey: config.secretKey,
+        isProduction: config.isProduction,
+        baseUrl: config.isProduction ? 'https://api.cashfree.com/pg' : 'https://sandbox.cashfree.com/pg'
+    };
+};
 
 // @desc    Create Cashfree order/session
 // @route   POST /api/payments/cashfree/create-order
@@ -28,17 +34,10 @@ const getCashfreeHeaders = () => ({
 const createCashfreeOrder = async (req, res) => {
     try {
         const { orderId, amount, customerDetails } = req.body;
+        const config = await getCashfreeConfig();
 
         if (!orderId || !amount || !customerDetails) {
             return res.status(400).json({ message: 'Missing required fields' });
-        }
-
-        // Check if Cashfree is configured
-        if (!process.env.CASHFREE_APP_ID || process.env.CASHFREE_APP_ID === 'YOUR_CASHFREE_APP_ID') {
-            return res.status(503).json({
-                message: 'Cashfree is not configured yet. Please add your API keys to the backend .env file.',
-                instructions: 'Get your keys from https://merchant.cashfree.com → Developers → API Keys'
-            });
         }
 
         const request = {
@@ -52,20 +51,26 @@ const createCashfreeOrder = async (req, res) => {
                 customer_phone: customerDetails.phone || req.user.phoneNumber || '9999999999'
             },
             order_meta: {
-                return_url: `${process.env.FRONTEND_URL || 'http://localhost:5173'}/order-confirmation?order_id={order_id}`,
+                return_url: `${process.env.FRONTEND_URL || 'http://localhost:5173'}/order-confirmation?order_id={order_id}&gateway=cashfree`,
                 notify_url: `${process.env.BACKEND_URL || 'http://localhost:5001'}/api/payments/cashfree/webhook`
             }
         };
 
-        const response = await cashfreeApi.post('/orders', request, {
-            headers: getCashfreeHeaders()
+        const response = await axios.post(`${config.baseUrl}/orders`, request, {
+            headers: {
+                'Content-Type': 'application/json',
+                'x-api-version': '2023-08-01',
+                'x-client-id': config.appId,
+                'x-client-secret': config.secretKey
+            }
         });
 
         res.json({
             success: true,
             orderId: response.data.order_id,
             paymentSessionId: response.data.payment_session_id,
-            orderStatus: response.data.order_status
+            orderStatus: response.data.order_status,
+            gateway: 'cashfree'
         });
 
     } catch (error) {
@@ -83,13 +88,18 @@ const createCashfreeOrder = async (req, res) => {
 const verifyCashfreePayment = async (req, res) => {
     try {
         const { orderId } = req.body;
+        const config = await getCashfreeConfig();
 
         if (!orderId) {
             return res.status(400).json({ message: 'Order ID is required' });
         }
 
-        const response = await cashfreeApi.get(`/orders/${orderId}/payments`, {
-            headers: getCashfreeHeaders()
+        const response = await axios.get(`${config.baseUrl}/orders/${orderId}/payments`, {
+            headers: {
+                'x-api-version': '2023-08-01',
+                'x-client-id': config.appId,
+                'x-client-secret': config.secretKey
+            }
         });
 
         const payments = response.data;
@@ -109,7 +119,8 @@ const verifyCashfreePayment = async (req, res) => {
                         id: successfulPayment.cf_payment_id,
                         status: 'SUCCESS',
                         update_time: new Date().toISOString(),
-                        email_address: req.user.email
+                        email_address: req.user.email,
+                        gateway: 'cashfree'
                     };
                     order.status = 'PAID';
                     await order.save();
@@ -143,13 +154,15 @@ const verifyCashfreePayment = async (req, res) => {
 // @access  Public (with signature verification)
 const cashfreeWebhook = async (req, res) => {
     try {
+        const crypto = require('crypto');
+        const config = await getCashfreeConfig();
         const signature = req.headers['x-webhook-signature'];
         const timestamp = req.headers['x-webhook-timestamp'];
         const rawBody = JSON.stringify(req.body);
 
         // Verify signature
         const expectedSignature = crypto
-            .createHmac('sha256', process.env.CASHFREE_SECRET_KEY)
+            .createHmac('sha256', config.secretKey)
             .update(timestamp + rawBody)
             .digest('base64');
 

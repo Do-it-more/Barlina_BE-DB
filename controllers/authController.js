@@ -207,7 +207,7 @@ const loginUser = asyncHandler(async (req, res) => {
         const expiresIn = rememberMe ? '30d' : '1d';
 
         // Log Admin Login
-        if (user.role === 'admin' || user.role === 'super_admin') {
+        if (['admin', 'super_admin', 'finance', 'seller_admin'].includes(user.role)) {
             try {
                 // Non-blocking (failed audit log shouldn't stop login)
                 AuditLog.create({
@@ -274,7 +274,7 @@ const verifyTwoFactor = asyncHandler(async (req, res) => {
     await user.save();
 
     // Log Admin Login (2FA)
-    if (user.role === 'admin' || user.role === 'super_admin') {
+    if (['admin', 'super_admin', 'finance', 'seller_admin'].includes(user.role)) {
         await AuditLog.create({
             action: 'LOGIN',
             performedBy: {
@@ -1101,7 +1101,7 @@ const deleteMyAccount = asyncHandler(async (req, res) => {
 // @access  Private
 const logoutUser = asyncHandler(async (req, res) => {
     // Log the logout action for Admins
-    if (req.user && (req.user.role === 'admin' || req.user.role === 'super_admin')) {
+    if (req.user && ['admin', 'super_admin', 'finance', 'seller_admin'].includes(req.user.role)) {
         await AuditLog.create({
             action: 'LOGOUT',
             entityId: req.user._id,
