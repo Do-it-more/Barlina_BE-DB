@@ -15,7 +15,7 @@ const getInstamojoConfig = async () => {
         apiKey: config.apiKey,
         authToken: config.authToken,
         isProduction: config.isProduction,
-        baseUrl: config.isProduction ? 'https://api.instamojo.com/api/1.1' : 'https://test.instamojo.com/api/1.1'
+        baseUrl: config.isProduction ? 'https://www.instamojo.com/api/1.1' : 'https://test.instamojo.com/api/1.1'
     };
 };
 
@@ -45,7 +45,13 @@ const createInstamojoOrder = async (req, res) => {
         const formParams = new URLSearchParams();
         Object.keys(payload).forEach(key => formParams.append(key, payload[key]));
 
-        console.log(`[Instamojo] Creating payment request in ${config.isProduction ? 'PRODUCTION' : 'SANDBOX'} mode`);
+        console.log(`[Instamojo] ------------------------------------------------`);
+        console.log(`[Instamojo] Mode: ${config.isProduction ? 'PRODUCTION' : 'SANDBOX'}`);
+        console.log(`[Instamojo] Endpoint: ${config.baseUrl}/payment-requests/`);
+        console.log(`[Instamojo] API Key: ${config.apiKey ? config.apiKey.substring(0, 4) + '****' : 'MISSING'}`);
+        console.log(`[Instamojo] Auth Token: ${config.authToken ? config.authToken.substring(0, 4) + '****' : 'MISSING'}`);
+        console.log(`[Instamojo] Payload:`, JSON.stringify(payload, null, 2));
+        console.log(`[Instamojo] ------------------------------------------------`);
 
         const response = await axios.post(`${config.baseUrl}/payment-requests/`, formParams, {
             headers: {

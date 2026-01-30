@@ -128,4 +128,7 @@ userSchema.methods.matchPassword = async function (enteredPassword) {
 // OPTIMIZATION: Index for Admin Search
 userSchema.index({ name: 'text', email: 'text', phoneNumber: 'text' });
 
+// Debugging: Check allowed roles on load
+console.log('User Model Loaded. Roles:', userSchema.path('role').enumValues);
+
 module.exports = mongoose.model('User', userSchema);
