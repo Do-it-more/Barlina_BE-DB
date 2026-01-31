@@ -30,8 +30,16 @@ const {
     getUserById,
     updateUser,
     createUser,
-    getUserFullDetails
+    getUserFullDetails,
+    addToRecentlyViewed,
+    getRecentlyViewed
 } = require('../controllers/userController');
+const {
+    getAddresses,
+    addAddress,
+    updateAddress,
+    deleteAddress
+} = require('../controllers/addressController');
 const { protect, admin, superAdmin, checkPermission } = require('../middleware/authMiddleware');
 const upload = require('../middleware/uploadMiddleware');
 
@@ -71,6 +79,18 @@ router.put('/update-phone', protect, updatePhone);  // Phone verification for Go
 
 router.get('/wishlist', protect, getWishlist);
 router.post('/wishlist/:id', protect, toggleWishlist);
+
+router.route('/recently-viewed')
+    .get(protect, getRecentlyViewed)
+    .post(protect, addToRecentlyViewed);
+
+// Address Management Routes
+router.route('/addresses')
+    .get(protect, getAddresses)
+    .post(protect, addAddress);
+router.route('/addresses/:id')
+    .put(protect, updateAddress)
+    .delete(protect, deleteAddress);
 
 // =======================
 // ADMIN ROUTES (Strict RBAC: Super Admin Only for User Management)

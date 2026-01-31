@@ -28,8 +28,15 @@ const getAdminActivityLogs = asyncHandler(async (req, res) => {
         actionFilter = { action: { $nin: ['LOGIN', 'LOGOUT'] } };
     }
 
+    const role = req.query.role;
+    let roleFilter = { 'performedBy.role': { $in: ['admin', 'super_admin', 'finance'] } };
+
+    if (role && role !== 'all') {
+        roleFilter = { 'performedBy.role': role };
+    }
+
     const filter = {
-        'performedBy.role': { $in: ['admin', 'super_admin'] }, // Monitor all admin types
+        ...roleFilter,
         ...keyword,
         ...actionFilter
     };

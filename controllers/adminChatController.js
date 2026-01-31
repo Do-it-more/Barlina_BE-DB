@@ -16,38 +16,41 @@ const getChats = async (req, res) => {
                 select: 'content contentType sender createdAt isDeletedGlobally'
             })
             .sort({ lastMessageAt: -1 });
-
         // Transform for UI: Calculate unread counts, correct names etc.
-        const formattedChats = chats.reduce((acc, chat) => {
+        const formattedChats = await Promise.all(chats.map(async (chat) => {
             const chatObj = chat.toObject();
-            const myMemberData = chat.members.find(m => m.user?._id.toString() === req.user._id.toString());
+            const myMemberData = chat.members.find(m => m.user?._id?.toString() === req.user._id.toString());
+            const clearedAt = myMemberData?.clearedAt || new Date(0);
 
             // FILTER: If I cleared this chat AND there have been no new messages since, hide it.
-            // Exception: If it's a group chat, we usually keep it unless left? 
-            // The deleteChat logic for groups removes the user from members, so they wouldn't be found by .find() above anyway.
-            // So this logic mainly applies to private chats where we soft-delete via clearedAt.
             if (myMemberData?.clearedAt && chat.lastMessageAt) {
                 const clearedTime = new Date(myMemberData.clearedAt).getTime();
                 const lastMsgTime = new Date(chat.lastMessageAt).getTime();
-
-                // If cleared AFTER the last message, don't show it (it's effectively empty for me)
-                // Add a small buffer (e.g. 1000ms) to avoid race conditions where they are equal
                 if (clearedTime >= lastMsgTime) {
-                    return acc; // Skip adding to list
+                    return null; // Skip adding to list
                 }
             } else if (myMemberData?.clearedAt && !chat.lastMessageAt) {
-                // Cleared and never had a message (or empty), hide it
-                return acc;
+                return null;
             }
+
+            // Calculate Unread Count
+            // Count messages in this chat, sent by others, NOT read by me, and created AFTER I cleared the chat
+            const unreadCount = await AdminMessage.countDocuments({
+                chat: chat._id,
+                sender: { $ne: req.user._id }, // Not my own messages
+                "readBy.user": { $ne: req.user._id }, // Not read by me
+                createdAt: { $gt: clearedAt } // After I cleared the chat
+            });
+            chatObj.unreadCount = unreadCount;
 
             // For Private chats, figure out the "Other" user's name/photo
             if (chat.type === 'private') {
-                const otherMember = chat.members.find(m => m.user?._id.toString() !== req.user._id.toString());
+                const otherMember = chat.members.find(m => m.user?._id?.toString() !== req.user._id.toString());
                 if (otherMember && otherMember.user) {
                     chatObj.chatName = otherMember.user.name;
                     chatObj.chatAvatar = otherMember.user.profilePhoto;
                     chatObj.partnerId = otherMember.user._id;
-                    chatObj.isOnline = otherMember.user.isOnline || false; // Future proof
+                    chatObj.isOnline = otherMember.user.isOnline || false;
                 } else {
                     chatObj.chatName = "Unknown User";
                 }
@@ -57,11 +60,13 @@ const getChats = async (req, res) => {
                 chatObj.chatAvatar = chat.groupAvatar;
             }
 
-            acc.push(chatObj);
-            return acc;
-        }, []);
+            return chatObj;
+        }));
 
-        res.json(formattedChats);
+        // Filter out nulls (skipped chats)
+        const activeChats = formattedChats.filter(chat => chat !== null);
+
+        res.json(activeChats);
     } catch (error) {
         console.error(error);
         res.status(500).json({ message: 'Server Error' });

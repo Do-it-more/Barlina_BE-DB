@@ -953,7 +953,9 @@ const googleAuth = asyncHandler(async (req, res) => {
 
     try {
         // Exchange code for tokens
+        console.log(`[GoogleAuth] Exchanging code: ${code.substring(0, 10)}... using redirect_uri: postmessage`);
         const { tokens } = await client.getToken(code);
+        console.log(`[GoogleAuth] Tokens received. ID Token length: ${tokens.id_token?.length}`);
         client.setCredentials(tokens);
 
         // Get User Profile
@@ -1076,6 +1078,9 @@ const googleAuth = asyncHandler(async (req, res) => {
         }
     } catch (error) {
         console.error('Google OAuth error:', error);
+        if (error.response?.data) {
+            console.error('Google API Error Details:', JSON.stringify(error.response.data, null, 2));
+        }
         res.status(400);
         throw new Error('Google Authentication Failed: ' + error.message);
     }

@@ -169,6 +169,51 @@ const getUserFullDetails = asyncHandler(async (req, res) => {
     });
 });
 
+
+// @desc    Add product to recently viewed
+// @route   POST /api/users/recently-viewed
+// @access  Private
+const addToRecentlyViewed = asyncHandler(async (req, res) => {
+    const { productId } = req.body;
+    const user = await User.findById(req.user._id);
+
+    if (user) {
+        // Remove if exists (to move to top)
+        user.recentlyViewed = user.recentlyViewed.filter(item => item.product.toString() !== productId);
+
+        // Add to front
+        user.recentlyViewed.unshift({ product: productId, viewedAt: Date.now() });
+
+        // Limit to 20
+        if (user.recentlyViewed.length > 20) {
+            user.recentlyViewed.pop();
+        }
+
+        await user.save();
+        res.json(user.recentlyViewed);
+    } else {
+        res.status(404);
+        throw new Error('User not found');
+    }
+});
+
+// @desc    Get recently viewed products
+// @route   GET /api/users/recently-viewed
+// @access  Private
+const getRecentlyViewed = asyncHandler(async (req, res) => {
+    const user = await User.findById(req.user._id).populate({
+        path: 'recentlyViewed.product',
+        select: 'name price image brand rating numReviews countInStock'
+    });
+
+    if (user) {
+        res.json(user.recentlyViewed);
+    } else {
+        res.status(404);
+        throw new Error('User not found');
+    }
+});
+
 module.exports = {
     getUsers,
     deleteUser,
@@ -176,5 +221,7 @@ module.exports = {
     updateUser,
     updateUser,
     createUser,
-    getUserFullDetails
+    getUserFullDetails,
+    addToRecentlyViewed,
+    getRecentlyViewed
 };

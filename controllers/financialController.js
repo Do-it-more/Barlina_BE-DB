@@ -11,32 +11,36 @@ const getFinancialStats = async (req, res) => {
 
         let dateFilter = {};
         if (startDate && endDate) {
+            const end = new Date(endDate);
+            end.setHours(23, 59, 59, 999); // Include the full end day
+
             dateFilter = {
-                createdAt: {
+                date: {
                     $gte: new Date(startDate),
-                    $lte: new Date(endDate)
+                    $lte: end
                 }
             };
         }
 
-        // 1. Calculate Income from Orders (Paid and Delivered/Completed ideally, but 'isPaid' is good)
-        // Adjust filter for Order based on dateFilter if needed, usually 'paidAt' or 'createdAt'
-        const orderFilter = { isPaid: true };
-        if (startDate && endDate) {
-            orderFilter.paidAt = { $gte: new Date(startDate), $lte: new Date(endDate) };
-        }
+        // 1. Calculate Income from Financial Records (includes Manual + Automated Sales)
+        console.log("Stats Date Filter:", JSON.stringify(dateFilter, null, 2));
 
-        const incomeAggregation = await Order.aggregate([
-            { $match: orderFilter },
-            { $group: { _id: null, total: { $sum: "$totalPrice" } } }
+        const incomeAggregation = await FinancialRecord.aggregate([
+            { $match: { ...dateFilter, type: 'INCOME' } },
+            { $group: { _id: null, total: { $sum: "$amount" } } }
         ]);
+
+        console.log("Income Aggregation Result:", JSON.stringify(incomeAggregation, null, 2));
+
         const totalIncome = incomeAggregation.length > 0 ? incomeAggregation[0].total : 0;
 
         // 2. Calculate Refunds from ReturnRequests
         // Filter: status = REFUNDED
         const refundFilter = { status: 'REFUNDED' };
         if (startDate && endDate) {
-            refundFilter.updatedAt = { $gte: new Date(startDate), $lte: new Date(endDate) }; // Refund happens at update
+            const end = new Date(endDate);
+            end.setHours(23, 59, 59, 999);
+            refundFilter.updatedAt = { $gte: new Date(startDate), $lte: end };
         }
 
         const refundAggregation = await ReturnRequest.aggregate([
@@ -47,7 +51,9 @@ const getFinancialStats = async (req, res) => {
         // 2b. Calculate Refunds from Order Cancellations
         const cancellationFilter = { status: 'CANCELLED', 'cancellation.refundAmount': { $gt: 0 } };
         if (startDate && endDate) {
-            cancellationFilter['cancellation.approvedAt'] = { $gte: new Date(startDate), $lte: new Date(endDate) };
+            const end = new Date(endDate);
+            end.setHours(23, 59, 59, 999);
+            cancellationFilter['cancellation.approvedAt'] = { $gte: new Date(startDate), $lte: end };
         }
         const cancellationAggregation = await Order.aggregate([
             { $match: cancellationFilter },
@@ -58,19 +64,14 @@ const getFinancialStats = async (req, res) => {
             (cancellationAggregation.length > 0 ? cancellationAggregation[0].total : 0);
 
         // 3. Calculate Expenses and Salaries from FinancialRecord
-        const recordFilter = {};
-        if (startDate && endDate) {
-            recordFilter.date = { $gte: new Date(startDate), $lte: new Date(endDate) };
-        }
-
         const expenseAggregation = await FinancialRecord.aggregate([
-            { $match: { ...recordFilter, type: 'EXPENSE' } },
+            { $match: { ...dateFilter, type: 'EXPENSE' } },
             { $group: { _id: null, total: { $sum: "$amount" } } }
         ]);
         const totalExpenses = expenseAggregation.length > 0 ? expenseAggregation[0].total : 0;
 
         const salaryAggregation = await FinancialRecord.aggregate([
-            { $match: { ...recordFilter, type: 'SALARY' } },
+            { $match: { ...dateFilter, type: 'SALARY' } },
             { $group: { _id: null, total: { $sum: "$amount" } } }
         ]);
         const totalSalaries = salaryAggregation.length > 0 ? salaryAggregation[0].total : 0;
@@ -106,7 +107,17 @@ const getFinancialRecords = async (req, res) => {
             };
         }
 
-        const records = await FinancialRecord.find(filter).sort({ date: -1 }).populate('createdBy', 'name');
+        const records = await FinancialRecord.find(filter)
+            .sort({ date: -1 })
+            .populate('createdBy', 'name email phoneNumber')
+            .populate({
+                path: 'reference.id',
+                select: 'user invoiceNumber paymentResult paymentInfo',
+                populate: {
+                    path: 'user',
+                    select: 'name email phoneNumber'
+                }
+            });
         res.json(records);
     } catch (error) {
         res.status(500).json({ message: error.message });
@@ -118,7 +129,7 @@ const getFinancialRecords = async (req, res) => {
 // @access  Private/Admin
 const addFinancialRecord = async (req, res) => {
     try {
-        const { type, category, amount, description, date, paymentMethod } = req.body;
+        const { type, category, amount, description, date, paymentMethod, paymentId } = req.body;
 
         const record = new FinancialRecord({
             type,
@@ -127,6 +138,7 @@ const addFinancialRecord = async (req, res) => {
             description,
             date: date || Date.now(),
             paymentMethod,
+            paymentId,
             createdBy: req.user._id
         });
 

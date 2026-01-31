@@ -39,6 +39,10 @@ const financialRecordSchema = mongoose.Schema({
         required: true,
         default: 'BANK_TRANSFER'
     },
+    paymentId: {
+        type: String,
+        required: false
+    },
     status: {
         type: String,
         enum: ['PENDING', 'COMPLETED', 'CANCELLED'],

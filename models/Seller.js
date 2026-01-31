@@ -228,7 +228,7 @@ sellerSchema.methods.canPerformAction = function (action) {
     const approvedActions = {
         'add_product': this.canAddProducts && this.status === 'APPROVED',
         'receive_orders': this.canReceiveOrders && this.status === 'APPROVED',
-        'view_dashboard': ['APPROVED', 'SUSPENDED'].includes(this.status),
+        'view_dashboard': ['APPROVED', 'SUSPENDED', 'PENDING_VERIFICATION', 'UNDER_REVIEW'].includes(this.status),
         'edit_profile': !['BLOCKED'].includes(this.status)
     };
     return approvedActions[action] || false;

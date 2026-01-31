@@ -150,6 +150,8 @@ app.use('/api/returns', require('./routes/returnRoutes'));
 app.use('/api/payments', require('./routes/paymentRoutes')); // Cashfree Payment Gateway
 app.use('/api/finance', require('./routes/financialRoutes')); // Financial Department Records
 app.use('/api/admin/audit-logs', require('./routes/auditLogRoutes')); // Audit Logs (Super Admin)
+app.use('/api/notifications', require('./routes/notificationRoutes')); // User Notifications
+app.use('/api/wallet', require('./routes/walletRoutes')); // Wallet System
 app.get('/', (req, res) => {
     res.send('API is running...');
 });

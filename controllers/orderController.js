@@ -8,6 +8,8 @@ const AuditLog = require('../models/AuditLog');
 const ReturnRequest = require('../models/ReturnRequest');
 const Setting = require('../models/Setting');
 const FinancialRecord = require('../models/FinancialRecord');
+const User = require('../models/User');
+const WalletTransaction = require('../models/WalletTransaction');
 
 // Get frontend URL from environment or default to localhost
 const FRONTEND_URL = process.env.FRONTEND_URL || 'http://localhost:5173';
@@ -55,6 +57,27 @@ const updateOrderToPaid = asyncHandler(async (req, res) => {
 
         const updatedOrder = await order.save();
 
+        // --- CREATE FINANCIAL RECORD FOR INCOME ---
+        try {
+            await FinancialRecord.create({
+                type: 'INCOME',
+                category: 'Sales',
+                amount: updatedOrder.totalPrice,
+                description: `Payment received for Order #${updatedOrder.invoiceNumber || updatedOrder._id}`,
+                date: Date.now(),
+                reference: {
+                    model: 'Order',
+                    id: updatedOrder._id
+                },
+                paymentMethod: order.paymentMethod || 'Online',
+                status: 'COMPLETED',
+                createdBy: req.user._id // User who paid or Admin who marked as paid
+            });
+        } catch (err) {
+            console.error("Failed to create financial record for order:", err);
+            // Don't fail the request, just log it
+        }
+
         // Stock updates code ...
         // ...
 
@@ -62,7 +85,8 @@ const updateOrderToPaid = asyncHandler(async (req, res) => {
 
         // --- SEND RECEIPT EMAIL WITH PDF ---
         try {
-            const invoiceBuffer = await generateInvoicePDF(updatedOrder, order.user);
+            const settings = await Setting.findOne();
+            const invoiceBuffer = await generateInvoicePDF(updatedOrder, order.user, settings);
             const invoiceBase64 = invoiceBuffer.toString('base64');
 
             await sendEmail({
@@ -265,6 +289,47 @@ const addOrderItems = asyncHandler(async (req, res) => {
                 }
             }
 
+            // --- WALLET PAYMENT LOGIC ---
+            let isPaid = false;
+            let paidAt = null;
+            let paymentResult = {};
+
+            if (paymentMethod === 'WALLET') {
+                const user = await User.findById(req.user._id);
+                if (user.walletBalance < totalPrice) {
+                    res.status(400);
+                    // Rollback Stock (Atomic)
+                    for (const item of stockUpdatedItems) {
+                        await Product.findByIdAndUpdate(item.id, { $inc: { countInStock: item.qty } });
+                    }
+                    throw new Error('Insufficient wallet balance');
+                }
+
+                // Deduct Balance
+                user.walletBalance -= totalPrice;
+                await user.save();
+
+                // Create Transaction
+                await WalletTransaction.create({
+                    user: req.user._id,
+                    amount: totalPrice,
+                    type: 'DEBIT',
+                    description: 'Order Payment',
+                    referenceModel: 'Order',
+                    status: 'COMPLETED'
+                });
+
+                isPaid = true;
+                paidAt = Date.now();
+                paymentResult = {
+                    id: 'WALLET_' + Date.now(),
+                    status: 'COMPLETED',
+                    update_time: new Date().toISOString(),
+                    email_address: req.user.email
+                };
+            }
+            // -----------------------------
+
             // 2. Create Order (invoice number will be generated after payment)
             const expectedDeliveryDate = new Date();
             expectedDeliveryDate.setDate(expectedDeliveryDate.getDate() + (maxDeliveryDays || 5));
@@ -279,13 +344,175 @@ const addOrderItems = asyncHandler(async (req, res) => {
                 taxPrice,
                 shippingPrice,
                 totalPrice,
+                isPaid,
+                paidAt,
+                paymentResult,
                 expectedDeliveryDate
             });
 
             const createdOrder = await order.save();
 
+            // If Wallet Payment, Update Transaction with Order ID
+            if (paymentMethod === 'WALLET') {
+                await WalletTransaction.findOneAndUpdate(
+                    { referenceModel: 'Order', amount: totalPrice, type: 'DEBIT', referenceId: { $exists: false } },
+                    { referenceId: createdOrder._id },
+                    { sort: { createdAt: -1 } }
+                );
+
+                // --- POST-PAYMENT ACTIONS FOR WALLET (Invoice, Email, Finance) ---
+                try {
+                    // 1. Generate Invoice Number
+                    if (!createdOrder.invoiceNumber) {
+                        const randomStr = Math.random().toString(36).substring(2, 7).toUpperCase();
+                        createdOrder.invoiceNumber = `INV-${randomStr}`;
+                        await createdOrder.save();
+                    }
+
+                    // 2. Create Financial Record (Income)
+                    const FinancialRecord = require('../models/FinancialRecord');
+                    await FinancialRecord.create({
+                        type: 'INCOME',
+                        category: 'Sales',
+                        amount: createdOrder.totalPrice,
+                        description: `Payment received for Order #${createdOrder.invoiceNumber || createdOrder._id}`,
+                        date: Date.now(),
+                        reference: {
+                            model: 'Order',
+                            id: createdOrder._id
+                        },
+                        paymentMethod: 'Wallet',
+                        status: 'COMPLETED',
+                        createdBy: req.user._id
+                    });
+
+                    // 3. Send Email with Invoice PDF
+                    const generateInvoicePDF = require('../utils/generateInvoice');
+                    const settings = await Setting.findOne();
+
+                    // Populate seller info
+                    const populatedOrder = await Order.findById(createdOrder._id).populate({
+                        path: 'orderItems.product',
+                        select: 'ownerType seller name',
+                        populate: {
+                            path: 'seller',
+                            select: 'businessName ownerName _id'
+                        }
+                    });
+
+                    const invoiceBuffer = await generateInvoicePDF(populatedOrder, req.user, settings);
+                    const invoiceBase64 = invoiceBuffer.toString('base64');
+
+                    await sendEmail({
+                        to: req.user.email,
+                        subject: `Order Confirmation: #${createdOrder.invoiceNumber || createdOrder._id}`,
+                        html: `
+                            <div style="font-family: Arial, sans-serif; padding: 20px; color: #333;">
+                                <h2 style="color: #4F46E5;">Thank You for Your Order!</h2>
+                                <p>Hi ${req.user.name},</p>
+                                <p>Your order <strong>#${createdOrder.invoiceNumber || createdOrder._id}</strong> has been successfully placed using your Wallet balance.</p>
+                                
+                                <div style="background-color: #F3F4F6; padding: 15px; margin: 20px 0; border-radius: 8px;">
+                                    <p style="margin: 0; font-weight: bold;">Order Summary</p>
+                                    <p style="margin: 5px 0 0 0;">Total Amount: <strong>Rs. ${createdOrder.totalPrice.toFixed(2)}</strong></p>
+                                    <p style="margin: 5px 0 0 0;">Payment Method: <strong>Wallet</strong></p>
+                                    <p style="margin: 5px 0 0 0;">Payment Status: <strong style="color: #10B981;">PAID</strong></p>
+                                </div>
+
+                                <p>You can track your order status by clicking the button below:</p>
+                                <p style="margin-top: 20px;">
+                                    <a href="${FRONTEND_URL}/order/${createdOrder._id}" style="background-color: #4F46E5; color: white; padding: 10px 20px; text-decoration: none; border-radius: 5px; display: inline-block;">View Order</a>
+                                </p>
+                                
+                                <p style="color: #666; font-size: 12px; margin-top: 30px;">
+                                    Please find your invoice attached to this email.
+                                </p>
+                            </div>
+                        `,
+                        attachments: [
+                            {
+                                filename: `invoice-${createdOrder.invoiceNumber || createdOrder._id}.pdf`,
+                                content: invoiceBase64
+                            }
+                        ]
+                    });
+                    console.log(`Wallet Order confirmation email sent to ${req.user.email}`);
+
+                } catch (error) {
+                    console.error("Failed to perform post-wallet actions:", error);
+                    // Don't fail the order creation itself, just log the error
+                }
+            }
+
             // NOTE: Email is NOT sent here. It will be sent ONLY after payment is successful.
             // Invoice number is also generated after payment, not at order creation.
+
+            // --- SEND EMAIL FOR COD ORDERS ---
+            if (paymentMethod === 'COD') {
+                try {
+                    // Generate Invoice Number for COD immediately
+                    if (!createdOrder.invoiceNumber) {
+                        const randomStr = Math.random().toString(36).substring(2, 7).toUpperCase();
+                        createdOrder.invoiceNumber = `INV-${randomStr}`;
+                        await createdOrder.save();
+                    }
+
+                    // Generate Invoice PDF
+                    const generateInvoicePDF = require('../utils/generateInvoice');
+                    const settings = await Setting.findOne(); // Fetch global settings
+
+                    // Populate product and seller info for the invoice
+                    const populatedOrder = await Order.findById(createdOrder._id).populate({
+                        path: 'orderItems.product',
+                        select: 'ownerType seller name', // ensure we get name too just in case
+                        populate: {
+                            path: 'seller',
+                            select: 'businessName ownerName _id'
+                        }
+                    });
+
+                    const invoiceBuffer = await generateInvoicePDF(populatedOrder, req.user, settings);
+                    const invoiceBase64 = invoiceBuffer.toString('base64');
+
+                    await sendEmail({
+                        to: req.user.email,
+                        subject: `Order Placed: #${createdOrder.invoiceNumber || createdOrder._id}`,
+                        html: `
+                            <div style="font-family: Arial, sans-serif; padding: 20px; color: #333;">
+                                <h2 style="color: #4F46E5;">Thank You for Your Order!</h2>
+                                <p>Hi ${req.user.name},</p>
+                                <p>Your order <strong>#${createdOrder.invoiceNumber || createdOrder._id}</strong> has been successfully placed via Cash on Delivery.</p>
+                                
+                                <div style="background-color: #F3F4F6; padding: 15px; margin: 20px 0; border-radius: 8px;">
+                                    <p style="margin: 0; font-weight: bold;">Order Summary</p>
+                                    <p style="margin: 5px 0 0 0;">Total Amount: <strong>Rs. ${createdOrder.totalPrice.toFixed(2)}</strong></p>
+                                    <p style="margin: 5px 0 0 0;">Payment Method: <strong>Cash on Delivery</strong></p>
+                                </div>
+
+                                <p>Please have the exact amount ready when our courier partner arrives.</p>
+
+                                <p>You can track your order status by clicking the button below:</p>
+                                <p style="margin-top: 20px;">
+                                    <a href="${FRONTEND_URL}/order/${createdOrder._id}" style="background-color: #4F46E5; color: white; padding: 10px 20px; text-decoration: none; border-radius: 5px; display: inline-block;">View Order</a>
+                                </p>
+                                
+                                <p style="color: #666; font-size: 12px; margin-top: 30px;">
+                                    Please find your invoice attached to this email.
+                                </p>
+                            </div>
+                        `,
+                        attachments: [
+                            {
+                                filename: `invoice-${createdOrder.invoiceNumber || createdOrder._id}.pdf`,
+                                content: invoiceBase64
+                            }
+                        ]
+                    });
+                    console.log(`COD Order confirmation email sent to ${req.user.email}`);
+                } catch (error) {
+                    console.error("Failed to send COD order email:", error);
+                }
+            }
 
             res.status(201).json(createdOrder);
 
@@ -322,7 +549,16 @@ const updateOrderEstimatedDelivery = asyncHandler(async (req, res) => {
 // @access  Private
 const getOrderById = asyncHandler(async (req, res) => {
     const order = await Order.findById(req.params.id)
-        .populate('user', 'name email phoneNumber');
+        .populate('user', 'name email phoneNumber')
+        .populate({
+            path: 'orderItems.product',
+            select: 'name image price ownerType seller',
+            populate: {
+                path: 'seller',
+                model: 'Seller',
+                select: 'businessName ownerName'
+            }
+        });
 
     if (order) {
         res.json(order);
@@ -801,7 +1037,21 @@ const getOrderInvoice = asyncHandler(async (req, res) => {
     if (order) {
         const generateInvoicePDF = require('../utils/generateInvoice');
         try {
-            const invoiceBuffer = await generateInvoicePDF(order, order.user);
+            const settings = (await Setting.findOne()) || {}; // Fetch global settings or default to empty object
+
+            // Populate product and seller info for the invoice
+            const populatedOrder = await Order.findById(req.params.id)
+                .populate('user', 'name email address city postalCode country phoneNumber')
+                .populate({
+                    path: 'orderItems.product',
+                    select: 'ownerType seller name',
+                    populate: {
+                        path: 'seller',
+                        select: 'businessName ownerName _id'
+                    }
+                });
+
+            const invoiceBuffer = await generateInvoicePDF(populatedOrder, populatedOrder.user, settings);
 
             res.set({
                 'Content-Type': 'application/pdf',
@@ -815,6 +1065,35 @@ const getOrderInvoice = asyncHandler(async (req, res) => {
             res.status(500);
             throw new Error('Failed to generate invoice PDF');
         }
+    } else {
+        res.status(404);
+        throw new Error('Order not found');
+    }
+});
+
+// @desc    Delete order
+// @route   DELETE /api/orders/:id
+// @access  Private/Admin
+const deleteOrder = asyncHandler(async (req, res) => {
+    const order = await Order.findById(req.params.id);
+
+    if (order) {
+        await order.deleteOne();
+
+        // Log audit
+        await AuditLog.create({
+            action: 'ORDER_DELETED',
+            performedBy: {
+                id: req.user._id,
+                name: req.user.name,
+                role: req.user.role
+            },
+            targetModel: 'Order',
+            targetId: req.params.id,
+            timestamp: new Date()
+        });
+
+        res.json({ message: 'Order removed' });
     } else {
         res.status(404);
         throw new Error('Order not found');
@@ -836,5 +1115,7 @@ module.exports = {
     getOrderAuditLogs,
     updateOrdersStatusBulk,
     getOrderStats,
-    getOrderInvoice
+    getOrderStats,
+    getOrderInvoice,
+    deleteOrder
 };

@@ -1,11 +1,12 @@
 const Setting = require('../models/Setting');
 const { createCashfreeOrder, verifyCashfreePayment } = require('./cashfreeController');
 const { createInstamojoOrder, verifyInstamojoPayment } = require('./instamojoController');
+const { createRazorpayOrder, verifyRazorpayPayment } = require('./razorpayController');
 
 // @desc    Get Active Gateway
 const getActiveGateway = async () => {
     const settings = await Setting.findOne();
-    return settings?.paymentGateways?.activeGateway || 'cashfree';
+    return settings?.paymentGateways?.activeGateway || 'razorpay';
 };
 
 // @desc    Create Payment Order (Route to active gateway)
@@ -16,16 +17,15 @@ const createOrder = async (req, res) => {
         const activeGateway = await getActiveGateway();
 
         // If gateway is specified in query (for testing/overriding), use that
-        if (req.query.gateway) {
-            if (req.query.gateway === 'instamojo') return createInstamojoOrder(req, res);
-            if (req.query.gateway === 'cashfree') return createCashfreeOrder(req, res);
-        }
+        let targetGateway = req.query.gateway || activeGateway;
 
-        if (activeGateway === 'instamojo') {
-            return createInstamojoOrder(req, res);
-        } else {
-            return createCashfreeOrder(req, res);
-        }
+        if (targetGateway === 'instamojo') return createInstamojoOrder(req, res);
+        if (targetGateway === 'cashfree') return createCashfreeOrder(req, res);
+        if (targetGateway === 'razorpay') return createRazorpayOrder(req, res);
+
+        // Default Fallback
+        return createRazorpayOrder(req, res);
+
     } catch (error) {
         console.error('Payment Routing Error:', error);
         res.status(500).json({ message: 'Failed to route payment request' });
@@ -43,16 +43,14 @@ const verifyPayment = async (req, res) => {
             return verifyInstamojoPayment(req, res);
         } else if (gateway === 'cashfree') {
             return verifyCashfreePayment(req, res);
+        } else if (gateway === 'razorpay') {
+            return verifyRazorpayPayment(req, res);
         } else {
             // Fallback: Try to detect or create separated logic
-            // Since verifying requires specific params (orderId vs paymentRequestId), 
-            // we can try to guess or just default to active settings if not provided
             const activeGateway = await getActiveGateway();
-            if (activeGateway === 'instamojo') {
-                return verifyInstamojoPayment(req, res);
-            } else {
-                return verifyCashfreePayment(req, res);
-            }
+            if (activeGateway === 'instamojo') return verifyInstamojoPayment(req, res);
+            if (activeGateway === 'cashfree') return verifyCashfreePayment(req, res);
+            return verifyRazorpayPayment(req, res);
         }
     } catch (error) {
         console.error('Payment Verification Routing Error:', error);
@@ -66,10 +64,10 @@ const getPaymentConfig = async (req, res) => {
     const gateways = settings?.paymentGateways;
 
     res.json({
-        activeGateway: gateways?.activeGateway || 'cashfree',
+        activeGateway: gateways?.activeGateway || 'razorpay',
         isCashfreeActive: gateways?.cashfree?.isActive,
         isInstamojoActive: gateways?.instamojo?.isActive,
-        // Only return public identifiers if needed
+        isRazorpayActive: gateways?.razorpay?.isActive,
     });
 };
 

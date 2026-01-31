@@ -291,7 +291,9 @@ const getSellerDashboardStats = asyncHandler(async (req, res) => {
         payoutStatus: seller.payoutStatus,
         canAddProducts: seller.canAddProducts,
         canReceiveOrders: seller.canReceiveOrders,
-        notifications: getSellerNotifications(seller)
+        notifications: getSellerNotifications(seller),
+        adminNotes: seller.adminNotes,
+        approvalHistory: seller.approvalHistory
     });
 });
 
@@ -299,12 +301,21 @@ const getSellerDashboardStats = asyncHandler(async (req, res) => {
 function getSellerNotifications(seller) {
     const notifications = [];
 
+    // Show Admin Notes as a notification if present
+    if (seller.adminNotes) {
+        notifications.push({
+            id: 'admin_note',
+            message: `Message from Admin: ${seller.adminNotes}`,
+            type: 'info'
+        });
+    }
+
     if (seller.status === 'DRAFT') {
         notifications.push({
             id: 1,
             message: 'Complete your seller profile to get started.',
             type: 'info',
-            action: '/seller/onboarding'
+            action: { label: 'Complete Profile', url: '/seller/onboarding' }
         });
     }
 
@@ -321,7 +332,7 @@ function getSellerNotifications(seller) {
             id: 3,
             message: `Application rejected: ${seller.rejectionReason || 'Please contact support'}`,
             type: 'error',
-            action: '/seller/profile'
+            action: { label: 'Update Profile', url: '/seller/profile' }
         });
     }
 
@@ -338,7 +349,7 @@ function getSellerNotifications(seller) {
             id: 5,
             message: 'Start adding products to reach millions of customers!',
             type: 'success',
-            action: '/seller/products/add'
+            action: { label: 'Add Product', url: '/seller/products/add' }
         });
     }
 
@@ -649,7 +660,13 @@ const getSellerOrders = asyncHandler(async (req, res) => {
     };
 
     if (status) {
-        filter.status = status;
+        if (status === 'Pending') {
+            filter.status = { $in: ['CREATED', 'PAID'] };
+        } else if (status === 'Processing') {
+            filter.status = 'READY_TO_SHIP';
+        } else {
+            filter.status = status;
+        }
     }
 
     const skip = (parseInt(page) - 1) * parseInt(limit);

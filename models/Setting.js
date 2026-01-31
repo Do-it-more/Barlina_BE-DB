@@ -49,7 +49,7 @@ const settingSchema = mongoose.Schema({
 
     // Payment Gateway Configuration
     paymentGateways: {
-        activeGateway: { type: String, enum: ['cashfree', 'instamojo'], default: 'cashfree' },
+        activeGateway: { type: String, enum: ['cashfree', 'instamojo', 'razorpay'], default: 'razorpay' },
         cashfree: {
             isActive: { type: Boolean, default: true },
             appId: { type: String, default: '' }, // Client ID
@@ -60,6 +60,12 @@ const settingSchema = mongoose.Schema({
             isActive: { type: Boolean, default: false },
             apiKey: { type: String, default: '' },
             authToken: { type: String, default: '' },
+            isProduction: { type: Boolean, default: false }
+        },
+        razorpay: {
+            isActive: { type: Boolean, default: false },
+            keyId: { type: String, default: '' },
+            keySecret: { type: String, default: '' },
             isProduction: { type: Boolean, default: false }
         }
     },

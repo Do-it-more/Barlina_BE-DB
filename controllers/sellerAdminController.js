@@ -56,6 +56,33 @@ const getAllSellers = asyncHandler(async (req, res) => {
             { email: { $regex: search, $options: 'i' } },
             { phone: { $regex: search, $options: 'i' } }
         ];
+
+        try {
+            // Find users where ID matches search string (partial)
+            const matchingUsers = await User.aggregate([
+                { $addFields: { strId: { $toString: "$_id" } } },
+                { $match: { strId: { $regex: search, $options: 'i' } } },
+                { $project: { _id: 1 } }
+            ]);
+
+            if (matchingUsers.length > 0) {
+                filter.$or.push({ user: { $in: matchingUsers.map(u => u._id) } });
+            }
+
+            // Find sellers where ID matches search string (partial)
+            const matchingSellers = await Seller.aggregate([
+                { $match: { isDeleted: false } },
+                { $addFields: { strId: { $toString: "$_id" } } },
+                { $match: { strId: { $regex: search, $options: 'i' } } },
+                { $project: { _id: 1 } }
+            ]);
+
+            if (matchingSellers.length > 0) {
+                filter.$or.push({ _id: { $in: matchingSellers.map(s => s._id) } });
+            }
+        } catch (err) {
+            console.error('ID Search Error:', err);
+        }
     }
 
     const skip = (parseInt(page) - 1) * parseInt(limit);
@@ -158,26 +185,30 @@ const reviewSeller = asyncHandler(async (req, res) => {
     });
 
     // Send email notification to seller
-    const user = await User.findById(seller.user);
-    if (user && user.email) {
-        const subject = reviewStatus === 'RECOMMENDED'
-            ? 'Your Seller Application is Under Final Review'
-            : reviewStatus === 'CHANGES_REQUESTED'
-                ? 'Changes Required for Your Seller Application'
-                : 'Update on Your Seller Application';
+    try {
+        const user = await User.findById(seller.user);
+        if (user && user.email) {
+            const subject = reviewStatus === 'RECOMMENDED'
+                ? 'Your Seller Application is Under Final Review'
+                : reviewStatus === 'CHANGES_REQUESTED'
+                    ? 'Changes Required for Your Seller Application'
+                    : 'Update on Your Seller Application';
 
-        await sendEmail({
-            email: user.email,
-            subject,
-            html: `
-                <h2>Seller Application Update</h2>
-                <p>Hello ${seller.ownerName},</p>
-                <p>Your seller application for <strong>${seller.businessName}</strong> has been reviewed.</p>
-                <p><strong>Status:</strong> ${reviewStatus.replace('_', ' ')}</p>
-                ${notes ? `<p><strong>Notes:</strong> ${notes}</p>` : ''}
-                <p>Please log in to your seller dashboard for more details.</p>
-            `
-        });
+            await sendEmail({
+                email: user.email,
+                subject,
+                html: `
+                    <h2>Seller Application Update</h2>
+                    <p>Hello ${seller.ownerName},</p>
+                    <p>Your seller application for <strong>${seller.businessName}</strong> has been reviewed.</p>
+                    <p><strong>Status:</strong> ${reviewStatus.replace('_', ' ')}</p>
+                    ${notes ? `<p><strong>Notes:</strong> ${notes}</p>` : ''}
+                    <p>Please log in to your seller dashboard for more details.</p>
+                `
+            });
+        }
+    } catch (emailError) {
+        console.error('Failed to send review email:', emailError);
     }
 
     res.json(updatedSeller);
@@ -206,7 +237,12 @@ const approveSeller = asyncHandler(async (req, res) => {
     seller.payoutStatus = 'ACTIVE';
 
     if (commissionPercentage !== undefined) {
-        seller.commissionPercentage = commissionPercentage;
+        const comm = Number(commissionPercentage);
+        if (isNaN(comm) || comm < 0 || comm > 100) {
+            res.status(400);
+            throw new Error('Commission must be between 0 and 100');
+        }
+        seller.commissionPercentage = comm;
     }
 
     if (notes) {
@@ -228,7 +264,14 @@ const approveSeller = asyncHandler(async (req, res) => {
     seller._statusChangeReason = 'APPROVED';
     seller._statusChangeNotes = notes;
 
-    const updatedSeller = await seller.save();
+    let updatedSeller;
+    try {
+        updatedSeller = await seller.save();
+    } catch (error) {
+        console.error('Seller save failed:', error);
+        res.status(400);
+        throw new Error(error.message || 'Failed to approve seller');
+    }
 
     // Log audit
     await logAudit('SELLER_APPROVED', req.user, 'SELLER', seller._id, {
@@ -236,27 +279,32 @@ const approveSeller = asyncHandler(async (req, res) => {
         notes
     });
 
-    // Send approval email
-    const user = await User.findById(seller.user);
-    if (user && user.email) {
-        await sendEmail({
-            email: user.email,
-            subject: '🎉 Congratulations! Your Seller Account is Approved',
-            html: `
-                <h2>Your Seller Account is Now Active!</h2>
-                <p>Dear ${seller.ownerName},</p>
-                <p>We're thrilled to inform you that your seller application for <strong>${seller.businessName}</strong> has been approved!</p>
-                <p><strong>You can now:</strong></p>
-                <ul>
-                    <li>Add and manage your products</li>
-                    <li>Receive customer orders</li>
-                    <li>Track your earnings and payouts</li>
-                </ul>
-                <p><strong>Platform Commission:</strong> ${seller.commissionPercentage}%</p>
-                <p>Log in to your seller dashboard to get started.</p>
-                <p>Welcome to our marketplace!</p>
-            `
-        });
+    // Send approval email (Non-blocking)
+    try {
+        const user = await User.findById(seller.user);
+        if (user && user.email) {
+            await sendEmail({
+                email: user.email,
+                subject: '🎉 Congratulations! Your Seller Account is Approved',
+                html: `
+                    <h2>Your Seller Account is Now Active!</h2>
+                    <p>Dear ${seller.ownerName},</p>
+                    <p>We're thrilled to inform you that your seller application for <strong>${seller.businessName}</strong> has been approved!</p>
+                    <p><strong>You can now:</strong></p>
+                    <ul>
+                        <li>Add and manage your products</li>
+                        <li>Receive customer orders</li>
+                        <li>Track your earnings and payouts</li>
+                    </ul>
+                    <p><strong>Platform Commission:</strong> ${seller.commissionPercentage}%</p>
+                    <p>Log in to your seller dashboard to get started.</p>
+                    <p>Welcome to our marketplace!</p>
+                `
+            });
+        }
+    } catch (emailError) {
+        console.error('Failed to send approval email:', emailError);
+        // Continue without failing the request
     }
 
     res.json(updatedSeller);
@@ -301,19 +349,23 @@ const rejectSeller = asyncHandler(async (req, res) => {
     await logAudit('SELLER_REJECTED', req.user, 'SELLER', seller._id, { reason, notes });
 
     // Send rejection email
-    const user = await User.findById(seller.user);
-    if (user && user.email) {
-        await sendEmail({
-            email: user.email,
-            subject: 'Update on Your Seller Application',
-            html: `
-                <h2>Seller Application Update</h2>
-                <p>Dear ${seller.ownerName},</p>
-                <p>We regret to inform you that your seller application for <strong>${seller.businessName}</strong> could not be approved at this time.</p>
-                <p><strong>Reason:</strong> ${reason}</p>
-                <p>If you believe this was in error or would like to reapply with updated information, please contact our support team.</p>
-            `
-        });
+    try {
+        const user = await User.findById(seller.user);
+        if (user && user.email) {
+            await sendEmail({
+                email: user.email,
+                subject: 'Update on Your Seller Application',
+                html: `
+                    <h2>Seller Application Update</h2>
+                    <p>Dear ${seller.ownerName},</p>
+                    <p>We regret to inform you that your seller application for <strong>${seller.businessName}</strong> could not be approved at this time.</p>
+                    <p><strong>Reason:</strong> ${reason}</p>
+                    <p>If you believe this was in error or would like to reapply with updated information, please contact our support team.</p>
+                `
+            });
+        }
+    } catch (emailError) {
+        console.error('Failed to send rejection email:', emailError);
     }
 
     res.json(updatedSeller);
@@ -369,20 +421,24 @@ const suspendSeller = asyncHandler(async (req, res) => {
     });
 
     // Send suspension email
-    const user = await User.findById(seller.user);
-    if (user && user.email) {
-        await sendEmail({
-            email: user.email,
-            subject: 'Important: Your Seller Account Has Been Suspended',
-            html: `
-                <h2>Seller Account Suspension Notice</h2>
-                <p>Dear ${seller.ownerName},</p>
-                <p>Your seller account for <strong>${seller.businessName}</strong> has been suspended.</p>
-                <p><strong>Reason:</strong> ${reason}</p>
-                <p>Your products have been temporarily delisted and you cannot receive new orders.</p>
-                <p>Please contact our seller support team for more information and to resolve this issue.</p>
-            `
-        });
+    try {
+        const user = await User.findById(seller.user);
+        if (user && user.email) {
+            await sendEmail({
+                email: user.email,
+                subject: 'Important: Your Seller Account Has Been Suspended',
+                html: `
+                    <h2>Seller Account Suspension Notice</h2>
+                    <p>Dear ${seller.ownerName},</p>
+                    <p>Your seller account for <strong>${seller.businessName}</strong> has been suspended.</p>
+                    <p><strong>Reason:</strong> ${reason}</p>
+                    <p>Your products have been temporarily delisted and you cannot receive new orders.</p>
+                    <p>Please contact our seller support team for more information and to resolve this issue.</p>
+                `
+            });
+        }
+    } catch (emailError) {
+        console.error('Failed to send suspension email:', emailError);
     }
 
     res.json(updatedSeller);
@@ -434,19 +490,23 @@ const activateSeller = asyncHandler(async (req, res) => {
     await logAudit('SELLER_REACTIVATED', req.user, 'SELLER', seller._id, { notes });
 
     // Send reactivation email
-    const user = await User.findById(seller.user);
-    if (user && user.email) {
-        await sendEmail({
-            email: user.email,
-            subject: 'Your Seller Account Has Been Reactivated',
-            html: `
-                <h2>Good News! Your Account is Active Again</h2>
-                <p>Dear ${seller.ownerName},</p>
-                <p>Your seller account for <strong>${seller.businessName}</strong> has been reactivated.</p>
-                <p>You can now resume your selling activities on our platform.</p>
-                <p>Thank you for your patience!</p>
-            `
-        });
+    try {
+        const user = await User.findById(seller.user);
+        if (user && user.email) {
+            await sendEmail({
+                email: user.email,
+                subject: 'Your Seller Account Has Been Reactivated',
+                html: `
+                    <h2>Good News! Your Account is Active Again</h2>
+                    <p>Dear ${seller.ownerName},</p>
+                    <p>Your seller account for <strong>${seller.businessName}</strong> has been reactivated.</p>
+                    <p>You can now resume your selling activities on our platform.</p>
+                    <p>Thank you for your patience!</p>
+                `
+            });
+        }
+    } catch (emailError) {
+        console.error('Failed to send reactivation email:', emailError);
     }
 
     res.json(updatedSeller);
@@ -610,6 +670,74 @@ const blockSeller = asyncHandler(async (req, res) => {
     res.json(updatedSeller);
 });
 
+// @desc    Unblock seller
+// @route   PUT /api/admin/sellers/:id/unblock
+// @access  Private/Super Admin Only
+const unblockSeller = asyncHandler(async (req, res) => {
+    const { notes } = req.body;
+
+    const seller = await Seller.findById(req.params.id);
+
+    if (!seller) {
+        res.status(404);
+        throw new Error('Seller not found');
+    }
+
+    if (seller.status !== 'BLOCKED') {
+        res.status(400);
+        throw new Error('Only blocked sellers can be unblocked');
+    }
+
+    seller.status = 'APPROVED';
+    seller.suspensionReason = null;
+    seller.isLive = true;
+    seller.canAddProducts = true;
+    seller.canReceiveOrders = true;
+    seller.payoutStatus = 'ACTIVE';
+
+    if (notes) {
+        seller.adminNotes = (seller.adminNotes || '') + `\n[${new Date().toISOString()}] Unblocked: ${notes}`;
+    }
+
+    // Re-list blocked products
+    await Product.updateMany(
+        { seller: seller._id, listingStatus: 'BLOCKED' },
+        { isLive: true, listingStatus: 'APPROVED' }
+    );
+
+    // Set metadata for pre-save hook
+    seller._updatedBy = req.user._id;
+    seller._statusChangeReason = 'UNBLOCKED';
+    seller._statusChangeNotes = notes;
+
+    const updatedSeller = await seller.save();
+
+    // Log audit
+    await logAudit('SELLER_UNBLOCKED', req.user, 'SELLER', seller._id, { notes });
+
+    // Send email notification to seller
+    try {
+        const user = await User.findById(seller.user);
+        if (user && user.email) {
+            await sendEmail({
+                email: user.email,
+                subject: 'Your Seller Account Has Been Unblocked',
+                html: `
+                    <h2>Good News! Your Account has been Unblocked</h2>
+                    <p>Dear ${seller.ownerName},</p>
+                    <p>Your seller account for <strong>${seller.businessName}</strong> has been unblocked.</p>
+                    <p>You can now resume your selling activities on our platform.</p>
+                    <p>Thank you for your cooperation!</p>
+                `
+            });
+        }
+    } catch (emailError) {
+        console.error('Failed to send unblock email:', emailError);
+    }
+
+    res.json(updatedSeller);
+});
+
 module.exports = {
     getAllSellers,
     getSellerById,
@@ -621,5 +749,6 @@ module.exports = {
     updateCommission,
     updatePayoutStatus,
     getSellerStats,
-    blockSeller
+    blockSeller,
+    unblockSeller
 };

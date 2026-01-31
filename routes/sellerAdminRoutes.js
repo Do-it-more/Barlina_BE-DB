@@ -11,7 +11,8 @@ const {
     updateCommission,
     updatePayoutStatus,
     getSellerStats,
-    blockSeller
+    blockSeller,
+    unblockSeller
 } = require('../controllers/sellerAdminController');
 const { protect, admin, superAdmin } = require('../middleware/authMiddleware');
 
@@ -36,5 +37,6 @@ router.put('/:id/activate', superAdmin, activateSeller);
 router.put('/:id/commission', superAdmin, updateCommission);
 router.put('/:id/payout-status', superAdmin, updatePayoutStatus);
 router.put('/:id/block', superAdmin, blockSeller);
+router.put('/:id/unblock', superAdmin, unblockSeller);
 
 module.exports = router;

@@ -15,7 +15,8 @@ const {
     getOrderAuditLogs,
     updateOrdersStatusBulk,
     getOrderStats,
-    getOrderInvoice
+    getOrderInvoice,
+    deleteOrder
 } = require('../controllers/orderController');
 const { protect, admin, checkPermission } = require('../middleware/authMiddleware');
 
@@ -33,5 +34,6 @@ router.route('/:id/delivery-date').put(protect, checkPermission('orders'), updat
 router.route('/:id/cancel').put(protect, checkPermission('orders'), cancelOrder);
 router.route('/:id/status').put(protect, checkPermission('orders'), updateOrderStatus);
 router.route('/:id/audit').get(protect, checkPermission('orders'), getOrderAuditLogs);
+router.route('/:id').delete(protect, checkPermission('orders'), deleteOrder);
 
 module.exports = router;

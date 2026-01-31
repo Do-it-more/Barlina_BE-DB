@@ -41,9 +41,18 @@ const getProducts = asyncHandler(async (req, res) => {
         // Else: No assigned categories -> View ALL products (Global Access)
     }
 
+    const pageSize = Number(req.query.limit) || 12;
+    const page = Number(req.query.page) || 1;
+
+    const count = await Product.countDocuments({ ...keyword, ...categoryFilter });
+
     const products = await Product.find({ ...keyword, ...categoryFilter })
-        .select('name price discountPrice image countInStock isStockEnabled rating numReviews category isCodAvailable estimatedDeliveryDays colors specifications');
-    res.json(products);
+        .populate('seller', 'businessName ownerName user')
+        .select('name price discountPrice image countInStock isStockEnabled rating numReviews category isCodAvailable estimatedDeliveryDays colors specifications seller ownerType')
+        .limit(pageSize)
+        .skip(pageSize * (page - 1));
+
+    res.json({ products, page, pages: Math.ceil(count / pageSize), total: count });
 });
 
 // @desc    Get top rated products
@@ -53,7 +62,7 @@ const getTopProducts = asyncHandler(async (req, res) => {
     // Return newest 10 products as a simple "Top" metric for now, or just limit 8
     const products = await Product.find({})
         .sort({ createdAt: -1 })
-        .select('name price discountPrice image countInStock rating numReviews category')
+        .select('name price discountPrice image countInStock isStockEnabled rating numReviews category')
         .limit(8);
     res.json(products);
 });
@@ -310,7 +319,7 @@ const getRelatedProducts = asyncHandler(async (req, res) => {
             _id: { $ne: product._id },
             category: product.category
         })
-            .select('name price discountPrice image countInStock rating numReviews category')
+            .select('name price discountPrice image countInStock isStockEnabled rating numReviews category')
             .limit(8);
 
         // 2. If we have less than 8, fill the remaining space with other products
@@ -319,7 +328,7 @@ const getRelatedProducts = asyncHandler(async (req, res) => {
             const filler = await Product.find({
                 _id: { $nin: excludeIds }
             })
-                .select('name price discountPrice image countInStock rating numReviews category')
+                .select('name price discountPrice image countInStock isStockEnabled rating numReviews category')
                 .limit(8 - related.length);
 
             related = [...related, ...filler];

@@ -1,6 +1,18 @@
 const mongoose = require('mongoose');
 const bcrypt = require('bcryptjs');
 
+const addressSchema = mongoose.Schema({
+    label: { type: String, default: 'Home' }, // Home, Office, etc.
+    street: { type: String, required: true },
+    addressLine2: { type: String, default: '' },
+    city: { type: String, required: true },
+    state: { type: String, required: true },
+    postalCode: { type: String, required: true },
+    country: { type: String, required: true },
+    phoneNumber: { type: String, required: true },
+    isDefault: { type: Boolean, default: false }
+});
+
 const userSchema = mongoose.Schema({
     name: {
         type: String,
@@ -15,6 +27,7 @@ const userSchema = mongoose.Schema({
         type: String,
         required: [false, 'Please add a phone number']
     },
+    // Legacy Address Fields (Kept for backward compatibility, but we will migrate to addresses array)
     address: {
         street: { type: String, default: '' },
         addressLine2: { type: String, default: '' },
@@ -24,6 +37,21 @@ const userSchema = mongoose.Schema({
         country: { type: String, default: '' },
         phoneNumber: { type: String, default: '' }
     },
+    // New Multiple Addresses Field
+    addresses: [addressSchema],
+
+    // Wallet Balance
+    walletBalance: {
+        type: Number,
+        default: 0
+    },
+
+    // Recently Viewed Products
+    recentlyViewed: [{
+        product: { type: mongoose.Schema.Types.ObjectId, ref: 'Product' },
+        viewedAt: { type: Date, default: Date.now }
+    }],
+
     isEmailVerified: {
         type: Boolean,
         default: false
@@ -120,15 +148,11 @@ userSchema.pre('save', async function () {
 });
 
 // Method to compare password
-// Method to compare password
 userSchema.methods.matchPassword = async function (enteredPassword) {
     return await bcrypt.compare(enteredPassword, this.password);
 };
 
 // OPTIMIZATION: Index for Admin Search
 userSchema.index({ name: 'text', email: 'text', phoneNumber: 'text' });
-
-// Debugging: Check allowed roles on load
-console.log('User Model Loaded. Roles:', userSchema.path('role').enumValues);
 
 module.exports = mongoose.model('User', userSchema);
