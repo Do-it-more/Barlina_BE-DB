@@ -514,6 +514,16 @@ const addOrderItems = asyncHandler(async (req, res) => {
                 }
             }
 
+            // Notify Admins via Socket
+            if (req.io) {
+                req.io.to('admin_global').emit('new_order', {
+                    orderId: createdOrder._id,
+                    user: req.user.name,
+                    amount: createdOrder.totalPrice,
+                    paymentMethod: paymentMethod
+                });
+            }
+
             res.status(201).json(createdOrder);
 
         } catch (error) {

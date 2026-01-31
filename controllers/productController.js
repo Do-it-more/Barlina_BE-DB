@@ -1,6 +1,8 @@
 const asyncHandler = require('express-async-handler');
 const Product = require('../models/Product');
 const Order = require('../models/Order');
+const StockSubscription = require('../models/StockSubscription');
+const sendEmail = require('../utils/sendEmail');
 
 const Category = require('../models/Category');
 
@@ -178,6 +180,7 @@ const updateProduct = asyncHandler(async (req, res) => {
     const product = await Product.findById(req.params.id);
 
     if (product) {
+        const previousStock = product.countInStock;
         product.name = name || product.name;
         product.price = price !== undefined ? price : product.price; // Allow 0
         product.discountPrice = discountPrice !== undefined ? discountPrice : product.discountPrice;
@@ -206,6 +209,51 @@ const updateProduct = asyncHandler(async (req, res) => {
         product.returnPolicy = req.body.returnPolicy || product.returnPolicy; // Persist Return Policy
 
         const updatedProduct = await product.save();
+
+        // Check if stock was updated from 0 to > 0
+        if (previousStock <= 0 && updatedProduct.countInStock > 0 && updatedProduct.isStockEnabled !== false) {
+            const subscriptions = await StockSubscription.find({ product: updatedProduct._id });
+
+            if (subscriptions.length > 0) {
+                // Send emails in background
+                const checkoutUrl = `${process.env.FRONTEND_URL || 'http://localhost:5173'}/product/${updatedProduct._id}`;
+
+                for (const sub of subscriptions) {
+                    let imageUrl = updatedProduct.image;
+                    if (imageUrl && imageUrl.startsWith('/')) {
+                        const backendUrl = process.env.BACKEND_URL || 'http://localhost:5001';
+                        // Gmail cannot access localhost images, so we use a placeholder for dev testing
+                        if (backendUrl.includes('localhost') || backendUrl.includes('127.0.0.1')) {
+                            imageUrl = 'https://placehold.co/300x300/png?text=Product+Image';
+                        } else {
+                            // Prepend backend URL if it's a relative path on production
+                            imageUrl = `${backendUrl}${imageUrl}`;
+                        }
+                    }
+
+                    try {
+                        await sendEmail({
+                            to: sub.email,
+                            subject: `'${updatedProduct.name}' is back in stock!`,
+                            html: `
+                                <div style="font-family: Arial, sans-serif;">
+                                    <h2>Good news! 🚀</h2>
+                                    <p>The product you were waiting for, <strong>${updatedProduct.name}</strong>, is back in stock!</p>
+                                    <img src="${imageUrl}" style="width: 150px; border-radius: 8px; margin: 10px 0;">
+                                    <p>Hurry up before it runs out again.</p>
+                                    <a href="${checkoutUrl}" style="background-color: #2563eb; color: white; padding: 10px 20px; text-decoration: none; border-radius: 5px;">Buy Now</a>
+                                </div>
+                             `
+                        });
+                        // Remove subscription
+                        await StockSubscription.findByIdAndDelete(sub._id);
+                    } catch (error) {
+                        console.error(`Failed to notify ${sub.email}:`, error);
+                    }
+                }
+            }
+        }
+
         res.json(updatedProduct);
     } else {
         res.status(404);
@@ -341,6 +389,42 @@ const getRelatedProducts = asyncHandler(async (req, res) => {
     }
 });
 
+// @desc    Subscribe to back in stock notifications
+// @route   POST /api/products/:id/subscribe
+// @access  Public
+const subscribeToStock = asyncHandler(async (req, res) => {
+    const { email } = req.body;
+    const product = await Product.findById(req.params.id);
+
+    if (!product) {
+        res.status(404);
+        throw new Error('Product not found');
+    }
+
+    if (product.countInStock > 0) {
+        res.status(400);
+        throw new Error('Product is already in stock');
+    }
+
+    const alreadySubscribed = await StockSubscription.findOne({
+        product: req.params.id,
+        email
+    });
+
+    if (alreadySubscribed) {
+        res.status(400);
+        throw new Error('You are already subscribed to this product');
+    }
+
+    await StockSubscription.create({
+        product: req.params.id,
+        email,
+        user: req.user ? req.user._id : null
+    });
+
+    res.status(201).json({ message: 'You will be notified when this product is back in stock.' });
+});
+
 module.exports = {
     getProducts,
     getTopProducts,
@@ -350,5 +434,6 @@ module.exports = {
     updateProduct,
     createProductReview,
     updateStockManual,
-    getRelatedProducts
+    getRelatedProducts,
+    subscribeToStock
 };

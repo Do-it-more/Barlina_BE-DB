@@ -11,6 +11,7 @@ const helmet = require('helmet');
 const mongoSanitize = require('express-mongo-sanitize');
 const xss = require('xss-clean');
 const hpp = require('hpp');
+const scheduleAbandonedCartEmails = require('./cron/abandonedCartScheduler');
 
 // ... (Firebase init)
 
@@ -169,6 +170,9 @@ const PORT = process.env.PORT || 5001;
 
 const startServer = async () => {
     await connectDB(); // ⬅️ if this fails, server will NOT start
+
+    // Start Cron Jobs
+    scheduleAbandonedCartEmails();
 
     server.listen(PORT, () => {
         console.log(

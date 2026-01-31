@@ -25,7 +25,11 @@ const cartSchema = mongoose.Schema({
             type: String,
             required: false
         }
-    }]
+    }],
+    abandonedEmailSent: {
+        type: Boolean,
+        default: false
+    }
 }, {
     timestamps: true
 });

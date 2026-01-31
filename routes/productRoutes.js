@@ -9,7 +9,8 @@ const {
     getTopProducts,
     createProductReview,
     updateStockManual,
-    getRelatedProducts
+    getRelatedProducts,
+    subscribeToStock
 } = require('../controllers/productController');
 const { protect, admin } = require('../middleware/authMiddleware');
 
@@ -29,5 +30,6 @@ router
 router.route('/:id/reviews').post(protect, createProductReview);
 router.route('/:id/stock').patch(protect, admin, updateStockManual);
 router.get('/:id/related', getRelatedProducts);
+router.post('/:id/subscribe', subscribeToStock);
 
 module.exports = router;
