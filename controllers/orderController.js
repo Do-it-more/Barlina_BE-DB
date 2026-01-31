@@ -330,14 +330,15 @@ const addOrderItems = asyncHandler(async (req, res) => {
             }
             // -----------------------------
 
-            // 2. Create Order (invoice number will be generated after payment)
+            // 2. Create Order (invoice number will be generated ALWAYS to prevent duplicate null error)
             const expectedDeliveryDate = new Date();
             expectedDeliveryDate.setDate(expectedDeliveryDate.getDate() + (maxDeliveryDays || 5));
 
+            const randomStr = Math.random().toString(36).substring(2, 7).toUpperCase();
             const order = new Order({
                 orderItems,
                 user: req.user._id,
-                // invoiceNumber is NOT set here - it will be generated after payment
+                invoiceNumber: `INV-${randomStr}`, // Generate immediately
                 shippingAddress,
                 paymentMethod,
                 itemsPrice,
