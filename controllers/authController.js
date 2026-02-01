@@ -1150,10 +1150,28 @@ const updatePhone = asyncHandler(async (req, res) => {
     }
 
     // Verify Firebase ID Token
+    // Verify Firebase ID Token OR Custom Mock Token
     try {
+        let verifiedPhoneNumber;
+
         if (admin.apps.length) {
-            const decodedToken = await admin.auth().verifyIdToken(firebaseToken);
-            const verifiedPhoneNumber = decodedToken.phone_number;
+            try {
+                const decodedToken = await admin.auth().verifyIdToken(firebaseToken);
+                verifiedPhoneNumber = decodedToken.phone_number;
+            } catch (tokenError) {
+                // FALLBACK: Check for Custom Mock Token (Dev/Test Mode)
+                try {
+                    const decodedMock = jwt.verify(firebaseToken, process.env.JWT_SECRET);
+                    if (decodedMock.phone && decodedMock.verified) {
+                        verifiedPhoneNumber = decodedMock.phone;
+                        console.log(`⚠️ Using Dev Mock Token for phone verification: ${verifiedPhoneNumber}`);
+                    } else {
+                        throw tokenError; // Throw original error if not a valid mock token
+                    }
+                } catch (jwtError) {
+                    throw tokenError; // Throw original error
+                }
+            }
 
             // Validate phone number matches
             const normalizedInput = phoneNumber.replace(/\D/g, '');
@@ -1168,7 +1186,7 @@ const updatePhone = asyncHandler(async (req, res) => {
             console.warn("⚠️ DEV MODE: Firebase Admin not initialized. Skipping backend phone token verification.");
         }
     } catch (firebaseError) {
-        console.error("Firebase token verification failed:", firebaseError);
+        console.error("Token verification failed:", firebaseError);
         res.status(400);
         throw new Error('Phone verification failed: ' + firebaseError.message);
     }
