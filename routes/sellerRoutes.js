@@ -43,4 +43,8 @@ router.delete('/products/:id', verifySellerOwnership('product'), deleteSellerPro
 // Orders
 router.get('/orders', seller, getSellerOrders);
 
+// Support Tickets
+router.get('/support-tickets', seller, require('../controllers/sellerSupportController').getSupportTickets);
+router.post('/support-tickets', seller, require('../controllers/sellerSupportController').createSupportTicket);
+
 module.exports = router;

@@ -146,6 +146,7 @@ app.use('/api/sellers', require('./routes/sellerRoutes'));
 app.use('/api/admin/management', require('./routes/adminManagementRoutes'));
 app.use('/api/admin/sellers', require('./routes/sellerAdminRoutes')); // Admin Seller Management
 app.use('/api/admin/product-reviews', require('./routes/productReviewRoutes')); // Product Review System
+app.use('/api/admin/support-tickets', require('./routes/adminSupportRoutes')); // Admin Support System
 app.use('/api/test-email', require('./routes/testEmailRoute'));
 app.use('/api/returns', require('./routes/returnRoutes'));
 app.use('/api/payments', require('./routes/paymentRoutes')); // Cashfree Payment Gateway

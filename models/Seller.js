@@ -200,6 +200,11 @@ const sellerSchema = mongoose.Schema({
         flaggedAt: { type: Date },
         flaggedBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User' }
     },
+    // New Feature: Chat Control
+    isChatEnabled: {
+        type: Boolean,
+        default: false // Hidden by default, enabled by Super Admin
+    },
     // Soft Delete
     isDeleted: {
         type: Boolean,

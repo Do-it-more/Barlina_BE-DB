@@ -738,6 +738,36 @@ const unblockSeller = asyncHandler(async (req, res) => {
     res.json(updatedSeller);
 });
 
+// @desc    Toggle seller chat access
+// @route   PUT /api/admin/sellers/:id/chat-access
+// @access  Private/Super Admin Only
+const toggleChatAccess = asyncHandler(async (req, res) => {
+    const { isChatEnabled } = req.body;
+
+    if (isChatEnabled === undefined) {
+        res.status(400);
+        throw new Error('isChatEnabled status is required');
+    }
+
+    const seller = await Seller.findById(req.params.id);
+
+    if (!seller) {
+        res.status(404);
+        throw new Error('Seller not found');
+    }
+
+    seller.isChatEnabled = isChatEnabled;
+
+    const updatedSeller = await seller.save();
+
+    // Log audit
+    await logAudit('SELLER_CHAT_ACCESS_TOGGLED', req.user, 'SELLER', seller._id, {
+        isChatEnabled
+    });
+
+    res.json(updatedSeller);
+});
+
 module.exports = {
     getAllSellers,
     getSellerById,
@@ -750,5 +780,6 @@ module.exports = {
     updatePayoutStatus,
     getSellerStats,
     blockSeller,
-    unblockSeller
+    unblockSeller,
+    toggleChatAccess
 };

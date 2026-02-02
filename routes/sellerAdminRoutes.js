@@ -38,5 +38,6 @@ router.put('/:id/commission', superAdmin, updateCommission);
 router.put('/:id/payout-status', superAdmin, updatePayoutStatus);
 router.put('/:id/block', superAdmin, blockSeller);
 router.put('/:id/unblock', superAdmin, unblockSeller);
+router.put('/:id/chat-access', superAdmin, require('../controllers/sellerAdminController').toggleChatAccess);
 
 module.exports = router;

@@ -13,7 +13,7 @@ const adminMessageSchema = new mongoose.Schema({
     },
     senderRole: {
         type: String,
-        enum: ['admin', 'super_admin', 'finance', 'seller_admin'],
+        enum: ['admin', 'super_admin', 'finance', 'seller_admin', 'seller'],
         required: true
     },
     content: { type: String, default: "" },

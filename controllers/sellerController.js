@@ -77,7 +77,10 @@ const getSellerProfile = asyncHandler(async (req, res) => {
         .populate('adminReview.reviewedBy', 'name');
 
     if (seller) {
-        res.json(seller);
+        // Ensure isChatEnabled is present, default to false if not set
+        const sellerResponse = seller.toObject();
+        sellerResponse.isChatEnabled = seller.isChatEnabled === true;
+        res.json(sellerResponse);
     } else {
         res.status(404);
         throw new Error('Seller profile not found');

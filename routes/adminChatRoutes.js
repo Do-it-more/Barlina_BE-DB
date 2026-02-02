@@ -2,7 +2,7 @@ const express = require('express');
 const router = express.Router();
 const multer = require('multer');
 const path = require('path');
-const { protect, admin } = require('../middleware/authMiddleware');
+const { protect, admin, chatAccess } = require('../middleware/authMiddleware');
 const {
     getChats,
     getMessages,
@@ -47,14 +47,14 @@ const upload = multer({
 });
 
 // Routes
-router.get('/rooms', protect, admin, getChats);
-router.post('/init', protect, admin, initChat);
-router.post('/group', protect, admin, createGroupChat);
-router.get('/:id/messages', protect, admin, getMessages);
-router.post('/send', protect, admin, upload.single('file'), sendMessage);
-router.post('/:id/clear', protect, admin, clearChat);
-router.put('/:id/read', protect, admin, markChatRead);
-router.delete('/message/:id', protect, admin, deleteMessage);
-router.delete('/:id', protect, admin, deleteChat);
+router.get('/rooms', protect, chatAccess, getChats);
+router.post('/init', protect, chatAccess, initChat);
+router.post('/group', protect, chatAccess, createGroupChat);
+router.get('/:id/messages', protect, chatAccess, getMessages);
+router.post('/send', protect, chatAccess, upload.single('file'), sendMessage);
+router.post('/:id/clear', protect, chatAccess, clearChat);
+router.put('/:id/read', protect, chatAccess, markChatRead);
+router.delete('/message/:id', protect, chatAccess, deleteMessage);
+router.delete('/:id', protect, chatAccess, deleteChat);
 
 module.exports = router;

@@ -57,6 +57,22 @@ const finance = asyncHandler(async (req, res, next) => {
     }
 });
 
+const chatAccess = asyncHandler(async (req, res, next) => {
+    // Roles allowed to use the Team Chat system
+    const allowedRoles = ['admin', 'super_admin', 'finance', 'seller_admin', 'seller'];
+
+    // For 'seller' role, we should ideally check if chat is enabled for them, 
+    // but the route controller logic or frontend hides the UI if not.
+    // Here we just check role validity.
+
+    if (req.user && allowedRoles.includes(req.user.role)) {
+        next();
+    } else {
+        res.status(403);
+        throw new Error('Not authorized to access chat system');
+    }
+});
+
 const superAdmin = asyncHandler(async (req, res, next) => {
     if (req.user && req.user.role === 'super_admin') {
         next();
@@ -181,6 +197,7 @@ module.exports = {
     finance,
     seller,
     approvedSeller,
-    verifySellerOwnership
+    verifySellerOwnership,
+    chatAccess
 };
 

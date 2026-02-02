@@ -269,11 +269,7 @@ const rejectProduct = asyncHandler(async (req, res) => {
 // @access  Private/Super Admin Only
 const blockProduct = asyncHandler(async (req, res) => {
     const { reason } = req.body;
-
-    if (!reason) {
-        res.status(400);
-        throw new Error('Block reason is required');
-    }
+    const blockReason = reason || 'Blocked by Super Admin'; // Default reason to prevent 400 errors
 
     const product = await Product.findById(req.params.id);
 
@@ -286,14 +282,14 @@ const blockProduct = asyncHandler(async (req, res) => {
     product.isLive = false;
     product.flags = {
         isFlagged: true,
-        flagReason: reason,
+        flagReason: blockReason,
         flaggedAt: new Date(),
         flaggedBy: req.user._id
     };
 
     // Set metadata for pre-save hook
     product._updatedBy = req.user._id;
-    product._statusChangeReason = reason;
+    product._statusChangeReason = blockReason;
 
     const updatedProduct = await product.save();
 
@@ -307,7 +303,7 @@ const blockProduct = asyncHandler(async (req, res) => {
     // Log audit
     await logAudit('PRODUCT_BLOCKED', req.user, 'PRODUCT', product._id, {
         productName: product.name,
-        reason
+        reason: blockReason
     });
 
     // Notify seller
@@ -320,7 +316,7 @@ const blockProduct = asyncHandler(async (req, res) => {
                 html: `
                     <h2>Product Blocked Notice</h2>
                     <p>Your product <strong>${product.name}</strong> has been blocked from the marketplace.</p>
-                    <p><strong>Reason:</strong> ${reason}</p>
+                    <p><strong>Reason:</strong> ${blockReason}</p>
                     <p>If you believe this was in error, please contact seller support.</p>
                 `
             });
@@ -540,6 +536,43 @@ const bulkApproveProducts = asyncHandler(async (req, res) => {
     res.json(results);
 });
 
+// @desc    Block a product (Fix endpoint)
+// @route   PUT /api/admin/product-reviews/:id/block-fix
+// @access  Private/Super Admin Only
+const blockProductFix = asyncHandler(async (req, res) => {
+    console.log('[DEBUG] blockProductFix Hit');
+    const { reason } = req.body;
+    const blockReason = reason || 'Blocked by Super Admin';
+
+    const product = await Product.findById(req.params.id);
+
+    if (!product) {
+        res.status(404);
+        throw new Error('Product not found');
+    }
+
+    product.listingStatus = 'BLOCKED';
+    product.isLive = false;
+    product.flags = {
+        isFlagged: true,
+        flagReason: blockReason,
+        flaggedAt: new Date(),
+        flaggedBy: req.user._id
+    };
+
+    product._updatedBy = req.user._id;
+    product._statusChangeReason = blockReason;
+
+    const updatedProduct = await product.save();
+
+    await logAudit('PRODUCT_BLOCKED', req.user, 'PRODUCT', product._id, {
+        productName: product.name,
+        reason: blockReason
+    });
+
+    res.json(updatedProduct);
+});
+
 module.exports = {
     getProductsForReview,
     getProductReviewById,
@@ -549,5 +582,6 @@ module.exports = {
     unblockProduct,
     requestProductChanges,
     getProductReviewStats,
-    bulkApproveProducts
+    bulkApproveProducts,
+    blockProductFix
 };
