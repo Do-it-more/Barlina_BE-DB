@@ -175,24 +175,30 @@ const approveProduct = asyncHandler(async (req, res) => {
         notes
     });
 
-    // Notify seller
+    // Send response first
+    res.json(updatedProduct);
+
+    // Notify seller (non-blocking - don't fail if email fails)
     if (product.seller) {
-        const seller = await Seller.findById(product.seller).populate('user', 'email');
-        if (seller && seller.user && seller.user.email) {
-            await sendEmail({
-                email: seller.user.email,
-                subject: '✅ Your Product Has Been Approved',
-                html: `
-                    <h2>Product Approved!</h2>
-                    <p>Great news! Your product <strong>${product.name}</strong> has been approved and is now live on the marketplace.</p>
-                    <p>Customers can now view and purchase your product.</p>
-                    <p>Keep up the great work!</p>
-                `
-            });
+        try {
+            const seller = await Seller.findById(product.seller).populate('user', 'email');
+            if (seller && seller.user && seller.user.email) {
+                await sendEmail({
+                    email: seller.user.email,
+                    subject: '✅ Your Product Has Been Approved',
+                    html: `
+                        <h2>Product Approved!</h2>
+                        <p>Great news! Your product <strong>${product.name}</strong> has been approved and is now live on the marketplace.</p>
+                        <p>Customers can now view and purchase your product.</p>
+                        <p>Keep up the great work!</p>
+                    `
+                });
+            }
+        } catch (emailError) {
+            console.error('Failed to send product approval email:', emailError);
+            // Don't throw - email failure shouldn't fail the approval
         }
     }
-
-    res.json(updatedProduct);
 });
 
 // @desc    Reject a product listing
