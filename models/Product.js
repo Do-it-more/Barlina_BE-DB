@@ -141,7 +141,8 @@ const productSchema = mongoose.Schema({
             'APPROVED',         // Admin/Super Admin approved
             'REJECTED',         // Product rejected
             'BLOCKED',          // Blocked by admin/super admin
-            'DELISTED'          // Temporarily removed from listing
+            'DELISTED',          // Temporarily removed from listing
+            'DELETE_REQUESTED'   // Seller requested deletion
         ],
         default: 'APPROVED' // Platform products are auto-approved
     },

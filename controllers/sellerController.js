@@ -645,21 +645,18 @@ const deleteSellerProduct = asyncHandler(async (req, res) => {
         throw new Error('You do not have access to this product');
     }
 
-    // Soft delete
-    product.isDeleted = true;
-    product.deletedAt = new Date();
-    product.deletedBy = req.user._id;
-    product.isLive = false;
+    // Request Deletion (Super Admin must approve)
+    product.listingStatus = 'DELETE_REQUESTED';
+    product.isLive = false; // Hide from customers immediately
 
     await product.save();
 
-    // Update seller metrics
-    await Seller.findByIdAndUpdate(seller._id, {
-        $inc: {
-            'metrics.totalProducts': -1,
-            'metrics.liveProducts': product.isLive ? -1 : 0
-        }
-    });
+    // Update seller metrics (Only decrease live count, not total)
+    if (product.isLive) {
+        await Seller.findByIdAndUpdate(seller._id, {
+            $inc: { 'metrics.liveProducts': -1 }
+        });
+    }
 
     res.json({ message: 'Product deleted successfully' });
 });
