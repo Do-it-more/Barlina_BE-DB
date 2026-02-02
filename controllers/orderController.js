@@ -10,6 +10,7 @@ const Setting = require('../models/Setting');
 const FinancialRecord = require('../models/FinancialRecord');
 const User = require('../models/User');
 const WalletTransaction = require('../models/WalletTransaction');
+const { createNotification } = require('./notificationController');
 
 // Get frontend URL from environment or default to localhost
 const FRONTEND_URL = process.env.FRONTEND_URL || 'http://localhost:5173';
@@ -523,6 +524,31 @@ const addOrderItems = asyncHandler(async (req, res) => {
                     amount: createdOrder.totalPrice,
                     paymentMethod: paymentMethod
                 });
+
+                // Create in-app notifications for admins
+                try {
+                    const adminUsers = await User.find({
+                        role: { $in: ['super_admin', 'admin', 'seller_admin', 'finance'] },
+                        isActive: { $ne: false }
+                    }).select('_id');
+
+                    for (const admin of adminUsers) {
+                        await createNotification({
+                            recipient: admin._id,
+                            type: 'ORDER',
+                            title: 'New Order Received',
+                            message: `${req.user.name} placed an order worth ₹${createdOrder.totalPrice.toFixed(2)}`,
+                            link: `/admin/orders/${createdOrder._id}`,
+                            metadata: {
+                                orderId: createdOrder._id,
+                                invoiceNumber: createdOrder.invoiceNumber,
+                                amount: createdOrder.totalPrice
+                            }
+                        }, req.io);
+                    }
+                } catch (notifError) {
+                    console.error('Failed to create order notifications:', notifError);
+                }
             }
 
             res.status(201).json(createdOrder);
@@ -668,6 +694,19 @@ const updateOrderToDelivered = asyncHandler(async (req, res) => {
                     `
             });
             console.log(`Delivery email sent to ${populatedOrder.user.email}`);
+
+            // Create in-app notification for customer
+            await createNotification({
+                recipient: populatedOrder.user._id,
+                type: 'ORDER',
+                title: 'Order Delivered! 🎉',
+                message: `Your order #${updatedOrder.invoiceNumber || updatedOrder._id.toString().slice(-6).toUpperCase()} has been delivered successfully!`,
+                link: `/order/${updatedOrder._id}`,
+                metadata: {
+                    orderId: updatedOrder._id,
+                    invoiceNumber: updatedOrder.invoiceNumber
+                }
+            }, req.io);
         } catch (error) {
             console.error("Failed to send delivery email:", error);
         }

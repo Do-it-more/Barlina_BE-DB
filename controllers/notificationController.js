@@ -72,10 +72,12 @@ const deleteNotification = asyncHandler(async (req, res) => {
     res.json({ message: 'Notification removed' });
 });
 
-// Internal Helper to Create Notification
-const createNotification = async ({ recipient, type, title, message, link, metadata }) => {
+// Internal Helper to Create Notification with Real-Time Socket Support
+// Usage: createNotification({ recipient, type, title, message, link, metadata }, io)
+// The `io` parameter is optional - if provided, will emit real-time event
+const createNotification = async ({ recipient, type, title, message, link, metadata }, io = null) => {
     try {
-        await Notification.create({
+        const notification = await Notification.create({
             recipient,
             type,
             title,
@@ -83,9 +85,26 @@ const createNotification = async ({ recipient, type, title, message, link, metad
             link,
             metadata
         });
-        // Note: In a real app, you might emit a Socket.IO event here too
+
+        // Emit real-time socket event to the recipient
+        if (io && recipient) {
+            io.to(recipient.toString()).emit('new_notification', {
+                _id: notification._id,
+                type: notification.type,
+                title: notification.title,
+                message: notification.message,
+                link: notification.link,
+                isRead: notification.isRead,
+                createdAt: notification.createdAt,
+                metadata: notification.metadata
+            });
+            console.log(`[Notification] Real-time notification sent to user ${recipient}`);
+        }
+
+        return notification;
     } catch (error) {
         console.error("Failed to create notification:", error);
+        return null;
     }
 };
 
