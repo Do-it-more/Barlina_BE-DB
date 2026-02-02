@@ -81,7 +81,7 @@ const getTopProducts = asyncHandler(async (req, res) => {
     })
         .sort({ createdAt: -1 })
         .select('name price discountPrice image countInStock isStockEnabled rating numReviews category')
-        .limit(8);
+        .limit(12);
     res.json(products);
 });
 
