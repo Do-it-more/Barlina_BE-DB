@@ -10,6 +10,14 @@ const Category = require('../models/Category');
 // @route   GET /api/products
 // @access  Public / Scoped for Admin
 const getProducts = asyncHandler(async (req, res) => {
+    // START FILTER: Only show Live and Non-deleted products for public storefront
+    const publicFilter = {
+        isDeleted: false,
+        listingStatus: 'APPROVED',
+        isLive: true
+    };
+    // END FILTER
+
     const keyword = req.query.keyword ? {
         name: {
             $regex: req.query.keyword,
@@ -46,9 +54,12 @@ const getProducts = asyncHandler(async (req, res) => {
     const pageSize = Number(req.query.limit) || 12;
     const page = Number(req.query.page) || 1;
 
-    const count = await Product.countDocuments({ ...keyword, ...categoryFilter });
+    // Combine all filters
+    const finalFilter = { ...publicFilter, ...keyword, ...categoryFilter };
 
-    const products = await Product.find({ ...keyword, ...categoryFilter })
+    const count = await Product.countDocuments(finalFilter);
+
+    const products = await Product.find(finalFilter)
         .populate('seller', 'businessName ownerName user')
         .select('name price discountPrice image countInStock isStockEnabled rating numReviews category isCodAvailable estimatedDeliveryDays colors specifications seller ownerType')
         .limit(pageSize)
@@ -62,7 +73,12 @@ const getProducts = asyncHandler(async (req, res) => {
 // @access  Public
 const getTopProducts = asyncHandler(async (req, res) => {
     // Return newest 10 products as a simple "Top" metric for now, or just limit 8
-    const products = await Product.find({})
+    // Only show Live, Approved, and Non-deleted products
+    const products = await Product.find({
+        isDeleted: false,
+        listingStatus: 'APPROVED',
+        isLive: true
+    })
         .sort({ createdAt: -1 })
         .select('name price discountPrice image countInStock isStockEnabled rating numReviews category')
         .limit(8);
