@@ -3,6 +3,7 @@ const Order = require('../models/Order');
 const Product = require('../models/Product');
 const User = require('../models/User');
 const Complaint = require('../models/Complaint');
+const Seller = require('../models/Seller'); // Import Seller model
 const PDFDocument = require('pdfkit');
 
 // Helper to convert JSON to CSV
@@ -106,7 +107,9 @@ const getDashboardStats = asyncHandler(async (req, res) => {
 
     // New counts for notifications
     const openComplaintsCount = await Complaint.countDocuments({ isViewedByAdmin: false });
+
     const newInquiriesCount = await Contact.countDocuments({ status: 'New' });
+    const pendingSellersCount = await Seller.countDocuments({ status: 'PENDING_VERIFICATION' });
 
     const dailyOrders = await Order.aggregate([
         {
@@ -138,7 +141,9 @@ const getDashboardStats = asyncHandler(async (req, res) => {
         dailyOrders,
         ordersByStatus,
         openComplaintsCount,
-        newInquiriesCount
+
+        newInquiriesCount,
+        pendingSellersCount
     });
 });
 

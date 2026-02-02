@@ -3,6 +3,7 @@ const Seller = require('../models/Seller');
 const User = require('../models/User');
 const Product = require('../models/Product');
 const Order = require('../models/Order');
+const Notification = require('../models/Notification');
 
 // @desc    Register new seller / Become a seller
 // @route   POST /api/sellers/register
@@ -14,8 +15,10 @@ const registerSeller = asyncHandler(async (req, res) => {
         email,
         phone,
         sellerType,
+        businessCategory,
         pan,
         gstin,
+        iec,
         businessAddress
     } = req.body;
 
@@ -35,8 +38,10 @@ const registerSeller = asyncHandler(async (req, res) => {
         email: email || req.user.email,
         phone: phone || req.user.phoneNumber,
         sellerType: sellerType || 'INDIVIDUAL',
+        businessCategory: businessCategory || 'General',
         pan: pan || 'PENDING',  // Placeholder, will be updated in step 2
         gstin,
+        iec, // Added iec to Seller.create
         businessAddress: businessAddress || {},
         status: 'DRAFT',
         onboardingStep: 1
@@ -89,8 +94,10 @@ const updateSellerProfile = asyncHandler(async (req, res) => {
         email,
         phone,
         sellerType,
+        businessCategory,
         pan,
         gstin,
+        iec,
         businessAddress
     } = req.body;
 
@@ -112,8 +119,10 @@ const updateSellerProfile = asyncHandler(async (req, res) => {
     if (email) seller.email = email;
     if (phone) seller.phone = phone;
     if (sellerType) seller.sellerType = sellerType;
+    if (businessCategory) seller.businessCategory = businessCategory;
     if (pan) seller.pan = pan;
     if (gstin !== undefined) seller.gstin = gstin;
+    if (iec !== undefined) seller.iec = iec;
     if (businessAddress) seller.businessAddress = { ...seller.businessAddress, ...businessAddress };
 
     // Auto advance step if currently on step 1
@@ -237,6 +246,23 @@ const submitForReview = asyncHandler(async (req, res) => {
     seller._statusChangeReason = 'Submitted for review by seller';
 
     const updatedSeller = await seller.save();
+
+    // Notify Super Admins
+    const superAdmins = await User.find({ role: 'super_admin' });
+
+    if (superAdmins && superAdmins.length > 0) {
+        const notifications = superAdmins.map(admin => ({
+            recipient: admin._id,
+            type: 'ALERT',
+            title: 'New Seller Application',
+            message: `${seller.businessName} has submitted their application for review.`,
+            link: `/admin/sellers/${seller._id}`,
+            isRead: false,
+            metadata: { sellerId: seller._id }
+        }));
+
+        await Notification.insertMany(notifications);
+    }
 
     res.json({
         message: 'Application submitted successfully! Our team will review your application within 2-3 business days.',

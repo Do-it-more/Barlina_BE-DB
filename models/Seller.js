@@ -45,12 +45,21 @@ const sellerSchema = mongoose.Schema({
         enum: ['INDIVIDUAL', 'PROPRIETORSHIP', 'PARTNERSHIP', 'COMPANY', 'LLP'],
         required: true
     },
+    businessCategory: {
+        type: String,
+        default: 'General'
+    },
     // Tax & Legal
     gstin: {
         type: String,
         trim: true,
         uppercase: true
         // Optional for small sellers
+    },
+    iec: {
+        type: String,
+        trim: true,
+        uppercase: true
     },
     pan: {
         type: String,
@@ -83,6 +92,8 @@ const sellerSchema = mongoose.Schema({
         chequeUrl: { type: String }, // Cancelled cheque for verification
         bankProofUrl: { type: String }, // Bank statement/passbook
         gstCertificateUrl: { type: String }, // GST registration certificate
+        proofOfOwnershipUrl: { type: String }, // Proof of ownership of business/premises
+        businessCertificateUrl: { type: String }, // Other government approval certificates
         sellerPhotoUrl: { type: String }, // Seller/owner photo for verification
         status: {
             type: String,

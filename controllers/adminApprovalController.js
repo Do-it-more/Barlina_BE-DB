@@ -4,6 +4,7 @@ const Product = require('../models/Product');
 const Order = require('../models/Order');
 const ReturnRequest = require('../models/ReturnRequest');
 const AuditLog = require('../models/AuditLog');
+const Seller = require('../models/Seller');
 
 // @desc    Get all pending approval requests
 // @route   GET /api/admin/management/approvals/pending
@@ -29,7 +30,34 @@ const getPendingApprovals = asyncHandler(async (req, res) => {
         return approval;
     }));
 
-    res.json(approvals);
+    // Fetch Pending Sellers
+    const pendingSellers = await Seller.find({ status: { $in: ['PENDING_VERIFICATION', 'UNDER_REVIEW'] } })
+        .populate('user', 'name email')
+        .sort({ createdAt: -1 })
+        .lean();
+
+    const sellerApprovals = pendingSellers.map(seller => ({
+        _id: seller._id,
+        targetModel: 'Seller Application',
+        action: 'VERIFY_SELLER',
+        status: 'PENDING',
+        admin: seller.user, // The user asking for approval
+        createdAt: seller.createdAt,
+        isSellerRequest: true,
+        requestData: {
+            businessName: seller.businessName,
+            sellerType: seller.sellerType,
+            email: seller.email,
+            phone: seller.phone
+        }
+    }));
+
+    // Combine and Sort
+    const combinedApprovals = [...approvals, ...sellerApprovals].sort((a, b) =>
+        new Date(b.createdAt) - new Date(a.createdAt)
+    );
+
+    res.json(combinedApprovals);
 });
 
 // @desc    Approve a request
@@ -37,6 +65,26 @@ const getPendingApprovals = asyncHandler(async (req, res) => {
 // @access  Private/SuperAdmin
 const approveRequest = asyncHandler(async (req, res) => {
     const approval = await AdminApprovalRequest.findById(req.params.id);
+
+    // Check for Seller Approval if not an AdminApprovalRequest
+    if (!approval) {
+        const seller = await Seller.findById(req.params.id);
+        if (seller && ['PENDING_VERIFICATION', 'UNDER_REVIEW'].includes(seller.status)) {
+            seller.status = 'APPROVED';
+            seller.approvedBy = req.user._id;
+            seller.approvalHistory.push({
+                status: 'APPROVED',
+                updatedBy: req.user._id,
+                date: new Date(),
+                reason: 'Approved via Approval Center'
+            });
+            await seller.save();
+            return res.json({ message: 'Seller approved successfully', seller });
+        }
+
+        res.status(404);
+        throw new Error('Approval request not found');
+    }
 
     if (approval) {
         if (approval.status !== 'PENDING') {
@@ -119,9 +167,6 @@ const approveRequest = asyncHandler(async (req, res) => {
         approval.approvedBy = req.user._id;
         const updatedApproval = await approval.save();
         res.json(updatedApproval);
-    } else {
-        res.status(404);
-        throw new Error('Approval request not found');
     }
 });
 
@@ -139,6 +184,22 @@ const rejectRequest = asyncHandler(async (req, res) => {
         const updatedApproval = await approval.save();
         res.json(updatedApproval);
     } else {
+        // Check for Seller
+        const seller = await Seller.findById(req.params.id);
+        if (seller && ['PENDING_VERIFICATION', 'UNDER_REVIEW'].includes(seller.status)) {
+            seller.status = 'REJECTED';
+            seller.approvedBy = req.user._id;
+            seller.rejectionReason = reason;
+            seller.approvalHistory.push({
+                status: 'REJECTED',
+                updatedBy: req.user._id,
+                date: new Date(),
+                reason: reason || 'Rejected via Approval Center'
+            });
+            await seller.save();
+            return res.json({ message: 'Seller rejected successfully', seller });
+        }
+
         res.status(404);
         throw new Error('Approval request not found');
     }
