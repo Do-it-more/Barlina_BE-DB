@@ -5,9 +5,16 @@ const notFound = (req, res, next) => {
 };
 
 const errorHandler = (err, req, res, next) => {
-    console.error('[ERROR HANDLER]', req.method, req.originalUrl, err.message);
-    console.error('[ERROR STACK]', err.stack);
     const statusCode = res.statusCode === 200 ? 500 : res.statusCode;
+
+    // Log basic error info
+    console.error(`[ERROR] ${statusCode} ${req.method} ${req.originalUrl} - ${err.message}`);
+
+    // Only log stack trace for server errors (500+)
+    if (statusCode >= 500) {
+        console.error('[ERROR STACK]', err.stack);
+    }
+
     res.status(statusCode);
     res.json({
         message: err.message,

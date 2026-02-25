@@ -37,7 +37,8 @@ const getProductsForReview = asyncHandler(async (req, res) => {
         page = 1,
         limit = 20,
         sortBy = 'createdAt',
-        sortOrder = 'desc'
+        sortOrder = 'desc',
+        ownerType
     } = req.query;
 
     const filter = { isDeleted: false };
@@ -56,6 +57,14 @@ const getProductsForReview = asyncHandler(async (req, res) => {
     if (sellerId) {
         filter.seller = sellerId;
     }
+
+    if (ownerType && ownerType !== 'all') {
+        filter.ownerType = ownerType;
+    }
+
+    // Debug Log
+    console.log('[DEBUG] getProductsForReview Query:', { ownerType, status, category });
+    console.log('[DEBUG] Applied Filter:', JSON.stringify(filter, null, 2));
 
     if (search) {
         filter.$or = [

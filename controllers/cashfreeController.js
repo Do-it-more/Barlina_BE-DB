@@ -158,7 +158,10 @@ const cashfreeWebhook = async (req, res) => {
         const config = await getCashfreeConfig();
         const signature = req.headers['x-webhook-signature'];
         const timestamp = req.headers['x-webhook-timestamp'];
-        const rawBody = JSON.stringify(req.body);
+
+        // IMPORTANT: For proper signature verification, you need raw body
+        // This requires express.raw() middleware on this route
+        const rawBody = typeof req.body === 'string' ? req.body : JSON.stringify(req.body);
 
         // Verify signature
         const expectedSignature = crypto
@@ -167,11 +170,11 @@ const cashfreeWebhook = async (req, res) => {
             .digest('base64');
 
         if (signature !== expectedSignature) {
-            console.warn('Invalid webhook signature');
+            console.warn('[Cashfree Webhook] Invalid signature');
             return res.status(401).json({ message: 'Invalid signature' });
         }
 
-        const { data, type } = req.body;
+        const { data, type } = typeof req.body === 'string' ? JSON.parse(req.body) : req.body;
 
         if (type === 'PAYMENT_SUCCESS_WEBHOOK') {
             const orderId = data.order.order_id;
@@ -182,29 +185,84 @@ const cashfreeWebhook = async (req, res) => {
 
             const order = await Order.findById(mongoOrderId);
 
-            if (order && !order.isPaid) {
-                order.isPaid = true;
-                order.paidAt = new Date();
-                order.paymentResult = {
-                    id: paymentId,
-                    status: 'SUCCESS',
-                    update_time: new Date().toISOString(),
-                    gateway: 'Cashfree'
-                };
-                order.status = 'PAID';
-                await order.save();
+            // IDEMPOTENCY CHECK - Don't process twice
+            if (!order) {
+                console.warn(`[Cashfree Webhook] Order not found: ${mongoOrderId}`);
+                return res.json({ received: true, message: 'Order not found' });
+            }
 
-                console.log(`✅ Order ${mongoOrderId} marked as paid via webhook`);
+            if (order.isPaid) {
+                console.log(`[Cashfree Webhook] Order ${mongoOrderId} already paid - skipping`);
+                return res.json({ received: true, message: 'Already processed' });
+            }
+
+            // Generate invoice number
+            if (!order.invoiceNumber) {
+                const randomStr = Math.random().toString(36).substring(2, 7).toUpperCase();
+                order.invoiceNumber = `INV-${randomStr}`;
+            }
+
+            order.isPaid = true;
+            order.paidAt = new Date();
+            order.paymentResult = {
+                id: paymentId,
+                status: 'SUCCESS',
+                update_time: new Date().toISOString(),
+                gateway: 'Cashfree'
+            };
+            order.status = 'PAID';
+            await order.save();
+
+            console.log(`✅ [Cashfree Webhook] Order ${mongoOrderId} marked as paid`);
+
+            // --- CREATE FINANCIAL RECORD ---
+            try {
+                const FinancialRecord = require('../models/FinancialRecord');
+                await FinancialRecord.create({
+                    type: 'INCOME',
+                    category: 'Sales',
+                    amount: order.totalPrice,
+                    description: `Payment via Cashfree: Order #${order.invoiceNumber || order._id}`,
+                    date: Date.now(),
+                    reference: { model: 'Order', id: order._id },
+                    paymentMethod: 'Cashfree',
+                    status: 'COMPLETED'
+                });
+            } catch (err) {
+                console.error('[Cashfree Webhook] Failed to create financial record:', err);
+            }
+
+            // --- CREATE SELLER LEDGER ENTRIES ---
+            try {
+                const commissionService = require('../services/commissionService');
+                await commissionService.createOrderLedgerEntries(order);
+                console.log(`[Cashfree Webhook] Ledger entries created for order ${mongoOrderId}`);
+            } catch (err) {
+                console.error('[Cashfree Webhook] Failed to create ledger entries:', err);
+            }
+
+            // --- QUEUE INVOICE EMAIL (if queue available) ---
+            try {
+                const queueService = require('../services/queueService');
+                if (order.user) {
+                    await queueService.queueInvoice(order._id.toString(), order.user.toString());
+                }
+            } catch (err) {
+                // Queue not available - email will be sent on next user interaction
+                console.log('[Cashfree Webhook] Queue not available for invoice');
             }
         }
 
+        // Always return 200 quickly to prevent gateway retries
         res.json({ received: true });
 
     } catch (error) {
-        console.error('Webhook Error:', error);
-        res.status(500).json({ message: 'Webhook processing failed' });
+        console.error('[Cashfree Webhook] Error:', error);
+        // Still return 200 to prevent retries that could cause issues
+        res.status(200).json({ received: true, error: 'Processing failed but acknowledged' });
     }
 };
+
 
 // @desc    Get payment status
 // @route   GET /api/payments/cashfree/status/:orderId

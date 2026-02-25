@@ -7,6 +7,10 @@ const AuditLog = require('../models/AuditLog');
 const Setting = require('../models/Setting');
 const FinancialRecord = require('../models/FinancialRecord');
 
+// Commission service for seller ledger
+const commissionService = require('../services/commissionService');
+
+
 // Get frontend URL from environment or default to localhost
 const FRONTEND_URL = process.env.FRONTEND_URL || 'http://localhost:5173';
 
@@ -291,7 +295,17 @@ const updateReturnStatus = asyncHandler(async (req, res) => {
             status: 'COMPLETED',
             createdBy: req.user._id
         });
+
+        // --- CREATE SELLER RETURN DEBIT ENTRY ---
+        try {
+            await commissionService.createReturnDebitEntry(returnReq, order, req.user._id);
+            console.log(`[Commission] Return debit entry created for return ${returnReq._id}`);
+        } catch (err) {
+            console.error("Failed to create return debit entry:", err);
+            // Don't fail - we can reconcile later
+        }
     }
+
 
     // --- SEND EMAIL NOTIFICATIONS ---
     if (status === 'APPROVED') {

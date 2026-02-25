@@ -169,7 +169,7 @@ const loginUser = asyncHandler(async (req, res) => {
 
             // Generate 6-digit OTP
             const otp = crypto.randomInt(100000, 999999).toString();
-            console.log("SUPER ADMIN LOGIN OTP:", otp);
+            if (process.env.NODE_ENV !== 'production') console.log("[DEV] 2FA LOGIN OTP:", otp);
             const salt = await bcrypt.genSalt(10);
             const hashedOtp = await bcrypt.hash(otp, salt);
 
@@ -322,7 +322,7 @@ const resendTwoFactorLogin = asyncHandler(async (req, res) => {
 
     // Generate 6-digit OTP
     const otp = crypto.randomInt(100000, 999999).toString();
-    console.log("RESENT LOGIN OTP:", otp);
+    if (process.env.NODE_ENV !== 'production') console.log("[DEV] RESENT LOGIN OTP:", otp);
     const salt = await bcrypt.genSalt(10);
     const hashedOtp = await bcrypt.hash(otp, salt);
 
@@ -812,7 +812,7 @@ const sendVerificationEmail = asyncHandler(async (req, res) => {
     } catch (error) {
         console.error("Email send failed:", error);
         // Still log OTP for debugging/fallback if email fails completely
-        console.log(`[FALLBACK] Verification OTP for ${email}: ${otp}`);
+        if (process.env.NODE_ENV !== 'production') console.log(`[DEV FALLBACK] Verification OTP for ${email}: ${otp}`);
 
         res.status(500).json({
             message: 'Failed to send verification email.',
@@ -892,7 +892,7 @@ const sendMockPhoneOtp = asyncHandler(async (req, res) => {
     );
 
     // LOG TO CONSOLE
-    console.log(`[MOCK SMS] OTP for ${phone}: ${otp}`);
+    if (process.env.NODE_ENV !== 'production') console.log(`[DEV MOCK SMS] OTP for ${phone}: ${otp}`);
 
     res.status(200).json({ message: 'OTP sent (Check server console)' });
 });
@@ -1092,13 +1092,31 @@ const googleAuth = asyncHandler(async (req, res) => {
 const deleteMyAccount = asyncHandler(async (req, res) => {
     const user = await User.findById(req.user._id);
 
-    if (user) {
-        await user.deleteOne();
-        res.json({ message: 'User account deleted' });
-    } else {
+    if (!user) {
         res.status(404);
         throw new Error('User not found');
     }
+
+    // Check if user has wallet balance
+    if (user.walletBalance && user.walletBalance > 0) {
+        res.status(400);
+        throw new Error(`You have ₹${user.walletBalance.toFixed(2)} in your wallet. Please spend or contact support to withdraw your wallet balance before deleting your account.`);
+    }
+
+    // Check for pending/active orders
+    const Order = require('../models/Order');
+    const activeOrders = await Order.countDocuments({
+        user: user._id,
+        status: { $in: ['Pending', 'Processing', 'Shipped'] }
+    });
+
+    if (activeOrders > 0) {
+        res.status(400);
+        throw new Error(`You have ${activeOrders} active order(s). Please wait until all orders are delivered or cancelled before deleting your account.`);
+    }
+
+    await user.deleteOne();
+    res.json({ message: 'User account deleted' });
 });
 
 // @desc    Logout user / Clear cookie or log action

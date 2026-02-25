@@ -35,7 +35,7 @@ const auditLogSchema = mongoose.Schema({
     performedBy: {
         id: {
             type: mongoose.Schema.Types.ObjectId,
-            required: true,
+            required: false, // Optional for system-generated entries
             ref: 'User'
         },
         name: { type: String, required: true },

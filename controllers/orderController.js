@@ -12,6 +12,18 @@ const User = require('../models/User');
 const WalletTransaction = require('../models/WalletTransaction');
 const { createNotification } = require('./notificationController');
 
+// Commission and Settlement Services
+const commissionService = require('../services/commissionService');
+let queueService;
+try {
+    queueService = require('../services/queueService');
+} catch (e) {
+    // Queue service not available (Redis not configured)
+    queueService = null;
+    console.warn('[OrderController] Queue service not available, using sync processing');
+}
+
+
 // Get frontend URL from environment or default to localhost
 const FRONTEND_URL = process.env.FRONTEND_URL || 'http://localhost:5173';
 
@@ -79,58 +91,78 @@ const updateOrderToPaid = asyncHandler(async (req, res) => {
             // Don't fail the request, just log it
         }
 
-        // Stock updates code ...
-        // ...
+        // --- CREATE SELLER LEDGER ENTRIES (COMMISSION TRACKING) ---
+        try {
+            await commissionService.createOrderLedgerEntries(updatedOrder, req.user._id);
+            console.log(`[Commission] Ledger entries created for order ${updatedOrder._id}`);
+        } catch (err) {
+            console.error("Failed to create seller ledger entries:", err);
+            // Don't fail - we can reconcile later
+        }
 
+        // --- ASYNC OR SYNC EMAIL/INVOICE PROCESSING ---
         const generateInvoicePDF = require('../utils/generateInvoice');
 
-        // --- SEND RECEIPT EMAIL WITH PDF ---
-        try {
-            const settings = await Setting.findOne();
-            const invoiceBuffer = await generateInvoicePDF(updatedOrder, order.user, settings);
-            const invoiceBase64 = invoiceBuffer.toString('base64');
+        if (queueService) {
+            // Async processing via queue (preferred for performance)
+            try {
+                await queueService.queueInvoice(updatedOrder._id.toString(), order.user._id.toString());
+                console.log(`[Queue] Invoice job queued for order ${updatedOrder._id}`);
+            } catch (queueErr) {
+                console.error("[Queue] Failed to queue invoice:", queueErr);
+                // Fall through to sync processing
+            }
+        } else {
+            // Sync processing (fallback when Redis not available)
+            try {
+                const settings = await Setting.findOne();
+                const invoiceBuffer = await generateInvoicePDF(updatedOrder, order.user, settings);
+                const invoiceBase64 = invoiceBuffer.toString('base64');
 
-            await sendEmail({
-                to: order.user.email,
-                subject: `Order Confirmation & Invoice: #${updatedOrder.invoiceNumber || updatedOrder._id}`,
-                html: `
-                    <div style="font-family: Arial, sans-serif; padding: 20px; color: #333;">
-                        <h2 style="color: #4F46E5;">Thank You for Your Order!</h2>
-                        <p>Hi ${order.user.name},</p>
-                        <p>We are excited to let you know that we have received your payment and your order <strong>#${updatedOrder.invoiceNumber || updatedOrder._id}</strong> is being processed.</p>
-                        
-                        <div style="background-color: #F3F4F6; padding: 15px; margin: 20px 0; border-radius: 8px;">
-                            <p style="margin: 0; font-weight: bold;">Order Summary</p>
-                            <p style="margin: 5px 0 0 0;">Total Amount: <strong>Rs. ${updatedOrder.totalPrice.toFixed(2)}</strong></p>
-                            <p style="margin: 5px 0 0 0;">Payment Status: <strong style="color: #10B981;">PAID</strong></p>
+                await sendEmail({
+                    to: order.user.email,
+                    subject: `Order Confirmation & Invoice: #${updatedOrder.invoiceNumber || updatedOrder._id}`,
+                    html: `
+                        <div style="font-family: Arial, sans-serif; padding: 20px; color: #333;">
+                            <h2 style="color: #4F46E5;">Thank You for Your Order!</h2>
+                            <p>Hi ${order.user.name},</p>
+                            <p>We are excited to let you know that we have received your payment and your order <strong>#${updatedOrder.invoiceNumber || updatedOrder._id}</strong> is being processed.</p>
+                            
+                            <div style="background-color: #F3F4F6; padding: 15px; margin: 20px 0; border-radius: 8px;">
+                                <p style="margin: 0; font-weight: bold;">Order Summary</p>
+                                <p style="margin: 5px 0 0 0;">Total Amount: <strong>Rs. ${updatedOrder.totalPrice.toFixed(2)}</strong></p>
+                                <p style="margin: 5px 0 0 0;">Payment Status: <strong style="color: #10B981;">PAID</strong></p>
+                            </div>
+
+                            <p>You can track your order status by clicking the button below:</p>
+                            <p style="margin-top: 20px;">
+                                <a href="${FRONTEND_URL}/order/${updatedOrder._id}" style="background-color: #4F46E5; color: white; padding: 10px 20px; text-decoration: none; border-radius: 5px; display: inline-block;">View Order</a>
+                            </p>
+
+                            <p style="color: #666; font-size: 12px; margin-top: 30px;">
+                                Please find your invoice attached to this email.
+                            </p>
                         </div>
-
-                        <p>You can track your order status by clicking the button below:</p>
-                        <p style="margin-top: 20px;">
-                            <a href="${FRONTEND_URL}/order/${updatedOrder._id}" style="background-color: #4F46E5; color: white; padding: 10px 20px; text-decoration: none; border-radius: 5px; display: inline-block;">View Order</a>
-                        </p>
-
-                        <p style="color: #666; font-size: 12px; margin-top: 30px;">
-                            Please find your invoice attached to this email.
-                        </p>
-                    </div>
-                `,
-                attachments: [
-                    {
-                        filename: `invoice-${updatedOrder.invoiceNumber || updatedOrder._id}.pdf`,
-                        content: invoiceBase64
-                    }
-                ]
-            });
-        } catch (error) {
-            console.error("Failed to prepare/send email/invoice:", error);
+                    `,
+                    attachments: [
+                        {
+                            filename: `invoice-${updatedOrder.invoiceNumber || updatedOrder._id}.pdf`,
+                            content: invoiceBase64
+                        }
+                    ]
+                });
+            } catch (error) {
+                console.error("Failed to prepare/send email/invoice:", error);
+            }
         }
+
         res.json(updatedOrder);
     } else {
         res.status(404);
         throw new Error('Order not found');
     }
 });
+
 
 // ... verify updateOrderToDelivered is correct ...
 
@@ -189,18 +221,28 @@ const cancelOrder = asyncHandler(async (req, res) => {
                 status: 'COMPLETED',
                 createdBy: req.user._id
             });
+
+            // --- CREATE SELLER CANCELLATION DEBITS ---
+            try {
+                await commissionService.createCancellationDebitEntry(order, req.user._id);
+                console.log(`[Commission] Cancellation debits created for order ${order._id}`);
+            } catch (err) {
+                console.error("Failed to create cancellation debits:", err);
+            }
         }
 
-        // Restore Stock
+        // Restore Stock (Atomic)
         const stockRestoration = order.orderItems.map(async (item) => {
-            const product = await Product.findById(item.product);
-            if (product) {
-                product.countInStock += item.qty;
-                await product.save();
-            }
+            await Product.findByIdAndUpdate(item.product, {
+                $inc: {
+                    countInStock: item.qty,
+                    sales: -item.qty
+                }
+            });
         });
 
         await Promise.all(stockRestoration);
+
 
         // --- SEND CANCELLATION EMAIL ---
         try {
@@ -245,8 +287,21 @@ const addOrderItems = asyncHandler(async (req, res) => {
         itemsPrice,
         taxPrice,
         shippingPrice,
-        totalPrice
+        totalPrice,
+        // NEW: Accept coupon data from frontend
+        couponCode,
+        couponDiscount,
+        idempotencyKey
     } = req.body;
+
+    // Idempotency check - prevent duplicate orders
+    if (idempotencyKey) {
+        const existingOrder = await Order.findOne({ idempotencyKey });
+        if (existingOrder) {
+            console.log(`[Order] Duplicate order prevented: ${idempotencyKey}`);
+            return res.status(200).json(existingOrder);
+        }
+    }
 
     if (orderItems && orderItems.length === 0) {
         res.status(400);
@@ -254,6 +309,7 @@ const addOrderItems = asyncHandler(async (req, res) => {
     } else {
         let maxDeliveryDays = 0;
         const stockUpdatedItems = [];
+
 
         try {
             // 1. Verify Stock & Deduct Atomically
@@ -274,9 +330,15 @@ const addOrderItems = asyncHandler(async (req, res) => {
 
                 if (shouldEnforceStock) {
                     // Attempt to atomically decrement stock ONLY IF sufficient stock exists
+                    // Also increment sales count
                     const updatedProduct = await Product.findOneAndUpdate(
                         { _id: item.product, countInStock: { $gte: item.qty } },
-                        { $inc: { countInStock: -item.qty } },
+                        {
+                            $inc: {
+                                countInStock: -item.qty,
+                                sales: item.qty
+                            }
+                        },
                         { new: true }
                     );
 
@@ -336,6 +398,21 @@ const addOrderItems = asyncHandler(async (req, res) => {
             expectedDeliveryDate.setDate(expectedDeliveryDate.getDate() + (maxDeliveryDays || 5));
 
             const randomStr = Math.random().toString(36).substring(2, 7).toUpperCase();
+
+            // Prepare coupon data for order
+            let couponData = null;
+            if (couponCode) {
+                const Coupon = require('../models/Coupon');
+                const coupon = await Coupon.findOne({ code: couponCode.toUpperCase() });
+                if (coupon) {
+                    couponData = {
+                        code: coupon.code,
+                        discountPercentage: coupon.discountType === 'PERCENTAGE' ? coupon.discountValue : null,
+                        discountAmount: couponDiscount || 0
+                    };
+                }
+            }
+
             const order = new Order({
                 orderItems,
                 user: req.user._id,
@@ -349,10 +426,23 @@ const addOrderItems = asyncHandler(async (req, res) => {
                 isPaid,
                 paidAt,
                 paymentResult,
-                expectedDeliveryDate
+                expectedDeliveryDate,
+                idempotencyKey: idempotencyKey || null,
+                coupon: couponData
             });
 
             const createdOrder = await order.save();
+
+            // --- RECORD COUPON USAGE AUTOMATICALLY ---
+            if (couponCode) {
+                try {
+                    const { recordCouponUsage } = require('../cron/automatedFinanceJobs');
+                    await recordCouponUsage(createdOrder._id, couponCode, req.user._id);
+                } catch (err) {
+                    console.error('[Order] Failed to record coupon usage:', err.message);
+                }
+            }
+
 
             // If Wallet Payment, Update Transaction with Order ID
             if (paymentMethod === 'WALLET') {
@@ -627,17 +717,56 @@ const createPaymentIntent = asyncHandler(async (req, res) => {
 // @desc    Get logged in user orders
 // @route   GET /api/orders/myorders
 // @access  Private
+// TIER 1: Added pagination — previously loaded ALL orders at once
 const getMyOrders = asyncHandler(async (req, res) => {
-    const orders = await Order.find({ user: req.user._id });
-    res.json(orders);
+    const pageSize = Number(req.query.limit) || 20;
+    const page = Number(req.query.page) || 1;
+
+    const filter = { user: req.user._id };
+
+    const count = await Order.countDocuments(filter);
+    const orders = await Order.find(filter)
+        .sort({ createdAt: -1 })
+        .limit(pageSize)
+        .skip(pageSize * (page - 1))
+        .lean();
+
+    res.json({
+        orders,
+        page,
+        pages: Math.ceil(count / pageSize),
+        total: count
+    });
 });
 
 // @desc    Get all orders
 // @route   GET /api/orders
 // @access  Private/Admin
+// TIER 1: Added pagination + status filter — previously loaded ALL orders at once
 const getOrders = asyncHandler(async (req, res) => {
-    const orders = await Order.find({}).populate('user', 'id name phoneNumber').sort({ createdAt: -1 });
-    res.json(orders);
+    const pageSize = Number(req.query.limit) || 30;
+    const page = Number(req.query.page) || 1;
+
+    // Optional status filter
+    let filter = {};
+    if (req.query.status) {
+        filter.status = req.query.status;
+    }
+
+    const count = await Order.countDocuments(filter);
+    const orders = await Order.find(filter)
+        .populate('user', 'id name phoneNumber')
+        .sort({ createdAt: -1 })
+        .limit(pageSize)
+        .skip(pageSize * (page - 1))
+        .lean();
+
+    res.json({
+        orders,
+        page,
+        pages: Math.ceil(count / pageSize),
+        total: count
+    });
 });
 
 // @desc    Update order to delivered
@@ -666,6 +795,15 @@ const updateOrderToDelivered = asyncHandler(async (req, res) => {
         });
 
         const updatedOrder = await order.save();
+
+        // --- MARK SELLER LEDGER ENTRIES AS ON_HOLD (7-day return window) ---
+        try {
+            await commissionService.markEntriesOnHold(updatedOrder, 7);
+            console.log(`[Commission] Ledger entries marked ON_HOLD for order ${updatedOrder._id}`);
+        } catch (err) {
+            console.error("Failed to mark ledger entries as ON_HOLD:", err);
+        }
+
 
         // --- SEND DELIVERY EMAIL ---
         try {

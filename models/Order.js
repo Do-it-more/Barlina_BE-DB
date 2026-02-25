@@ -11,6 +11,12 @@ const orderSchema = mongoose.Schema({
         // unique and sparse removed to prevent E11000 index clashes on null/undefined values
         // Uniqueness is practically handled by the INV-RANDOM generator in controller
     },
+    // Idempotency key to prevent duplicate orders
+    // Index is created separately below with partialFilterExpression to allow null values
+    idempotencyKey: {
+        type: String,
+        default: null
+    },
     orderItems: [{
         name: { type: String, required: true },
         qty: { type: Number, required: true },
@@ -21,6 +27,47 @@ const orderSchema = mongoose.Schema({
             required: true,
             ref: 'Product'
         },
+        // ============ SELLER ATTRIBUTION (NEW) ============
+        seller: {
+            type: mongoose.Schema.Types.ObjectId,
+            ref: 'Seller'
+        },
+        // Financial tracking per item
+        itemTotal: {
+            type: Number,  // price * qty
+            default: 0
+        },
+        sellerShare: {
+            type: Number,  // Amount after commission
+            default: 0
+        },
+        platformCommission: {
+            type: Number,  // Platform's cut
+            default: 0
+        },
+        commissionRate: {
+            type: Number,  // Commission % at time of order
+            default: 10
+        },
+        taxAmount: {
+            type: Number,  // GST/Tax on this item
+            default: 0
+        },
+        // Settlement tracking
+        settlementStatus: {
+            type: String,
+            enum: ['PENDING', 'ON_HOLD', 'ELIGIBLE', 'SETTLED'],
+            default: 'PENDING'
+        },
+        settlementId: {
+            type: mongoose.Schema.Types.ObjectId,
+            ref: 'Settlement'
+        },
+        ledgerEntryId: {
+            type: mongoose.Schema.Types.ObjectId,
+            ref: 'SellerLedger'
+        },
+        // ============ END SELLER ATTRIBUTION ============
         color: {
             type: String,
             required: false
@@ -35,7 +82,14 @@ const orderSchema = mongoose.Schema({
             ref: 'ReturnRequest'
         }
     }],
+    // Coupon tracking
+    coupon: {
+        code: String,
+        discountPercentage: Number,
+        discountAmount: Number
+    },
     shippingAddress: {
+        doorNumber: { type: String },
         address: { type: String, required: true },
         city: { type: String, required: true },
         postalCode: { type: String, required: true },
@@ -122,4 +176,13 @@ const orderSchema = mongoose.Schema({
     timestamps: true
 });
 
+// ==================== TIER 1: DATABASE INDEXES FOR PAGINATION ====================
+// These indexes are CRITICAL for fast paginated queries
+orderSchema.index({ user: 1, createdAt: -1 });               // getMyOrders (paginated)
+orderSchema.index({ status: 1, createdAt: -1 });              // getOrders with status filter
+orderSchema.index({ isPaid: 1, createdAt: -1 });              // Payment-related queries
+orderSchema.index({ 'orderItems.seller': 1, createdAt: -1 }); // Seller order queries
+orderSchema.index({ 'orderItems.settlementStatus': 1 });       // Settlement queries
+
 module.exports = mongoose.model('Order', orderSchema);
+

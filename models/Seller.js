@@ -211,13 +211,44 @@ const sellerSchema = mongoose.Schema({
         default: false
     },
     deletedAt: { type: Date },
-    deletedBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User' }
+    deletedBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
+
+    // ==================== PERFORMANCE TRACKING ====================
+    performanceTier: {
+        type: String,
+        enum: ['STANDARD', 'BRONZE', 'SILVER', 'GOLD', 'PLATINUM'],
+        default: 'STANDARD'
+    },
+    performanceScore: {
+        type: Number,
+        default: 0,
+        min: 0,
+        max: 100
+    },
+    baseCommissionRate: {
+        type: Number,
+        default: 10 // Base rate before performance adjustments
+    },
+    lastPerformanceReview: { type: Date },
+    performanceHistory: [{
+        date: { type: Date },
+        score: { type: Number },
+        tier: { type: String },
+        details: {
+            onTimeDelivery: Number,
+            returnRate: Number,
+            customerRating: Number,
+            orderVolume: Number,
+            responseTime: Number
+        }
+    }]
 }, {
     timestamps: true
 });
 
+
 // Indexes for efficient queries
-sellerSchema.index({ user: 1 });
+// user is unique, so index is created automatically
 sellerSchema.index({ status: 1 });
 sellerSchema.index({ 'kyc.status': 1 });
 sellerSchema.index({ businessName: 'text', ownerName: 'text', email: 'text' });

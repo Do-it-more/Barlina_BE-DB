@@ -9,7 +9,7 @@ const {
 const { protect, admin, superAdmin } = require('../middleware/authMiddleware');
 
 router.route('/')
-    .get(protect, getCategories)
+    .get(getCategories)
     .post(protect, superAdmin, createCategory);
 
 router.route('/:id')

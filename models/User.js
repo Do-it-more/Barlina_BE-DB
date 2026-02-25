@@ -3,6 +3,7 @@ const bcrypt = require('bcryptjs');
 
 const addressSchema = mongoose.Schema({
     label: { type: String, default: 'Home' }, // Home, Office, etc.
+    doorNumber: { type: String, default: '' },
     street: { type: String, required: true },
     addressLine2: { type: String, default: '' },
     city: { type: String, required: true },

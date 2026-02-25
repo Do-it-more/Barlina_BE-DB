@@ -32,27 +32,75 @@ const createCoupon = asyncHandler(async (req, res) => {
 // @route   POST /api/coupons/validate
 // @access  Private (or Public)
 const validateCoupon = asyncHandler(async (req, res) => {
-    const { code } = req.body;
+    const { code, orderValue } = req.body;
+    const userId = req.user?._id;
 
-    const coupon = await Coupon.findOne({ code });
+    if (!code) {
+        res.status(400);
+        throw new Error('Coupon code is required');
+    }
 
-    if (coupon && coupon.isActive) {
-        // Check expiry
-        if (new Date() > new Date(coupon.expiryDate)) {
+    const coupon = await Coupon.findOne({ code: code.toUpperCase() });
+
+    if (!coupon) {
+        res.status(404);
+        throw new Error('Invalid coupon code');
+    }
+
+    if (!coupon.isActive) {
+        res.status(400);
+        throw new Error('This coupon is no longer active');
+    }
+
+    // Enhanced validation using new model methods
+    if (userId && orderValue) {
+        // Get user's order count for first-order check
+        const Order = require('../models/Order');
+        const userOrderCount = await Order.countDocuments({
+            user: userId,
+            isPaid: true,
+            isCancelled: false
+        });
+
+        const validation = await coupon.canBeUsedBy(userId, orderValue, userOrderCount);
+
+        if (!validation.isValid) {
+            res.status(400);
+            throw new Error(validation.errors[0]);
+        }
+
+        const discount = coupon.calculateDiscount(orderValue);
+
+        res.json({
+            code: coupon.code,
+            discountType: coupon.discountType,
+            discountValue: coupon.discountValue,
+            discountPercentage: coupon.discountType === 'PERCENTAGE' ? coupon.discountValue : null,
+            calculatedDiscount: discount,
+            maxDiscount: coupon.maxDiscount,
+            minOrderValue: coupon.minOrderValue,
+            message: 'Coupon Applied!'
+        });
+    } else {
+        // Basic validation (legacy support)
+        const now = new Date();
+        if (now > coupon.expiryDate) {
             res.status(400);
             throw new Error('Coupon expired');
         }
 
         res.json({
             code: coupon.code,
-            discountPercentage: coupon.discountPercentage,
+            discountType: coupon.discountType || 'PERCENTAGE',
+            discountValue: coupon.discountValue || coupon.discountPercentage,
+            discountPercentage: coupon.discountType === 'PERCENTAGE' ? coupon.discountValue : null,
+            maxDiscount: coupon.maxDiscount,
+            minOrderValue: coupon.minOrderValue || 0,
             message: 'Coupon Applied!'
         });
-    } else {
-        res.status(404);
-        throw new Error('Invalid or inactive coupon');
     }
 });
+
 
 // @desc    Get all coupons
 // @route   GET /api/coupons

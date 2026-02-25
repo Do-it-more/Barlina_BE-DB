@@ -1,9 +1,11 @@
 const asyncHandler = require('express-async-handler');
 const Category = require('../models/Category');
+const cache = require('../services/cacheService');
 
 // @desc    Get all categories
 // @route   GET /api/categories
 // @access  Public / Scoped for Admin
+// TIER 2: Cached for public access (no user filter)
 const getCategories = asyncHandler(async (req, res) => {
     let query = {};
 
@@ -13,9 +15,20 @@ const getCategories = asyncHandler(async (req, res) => {
         if (req.user.assignedCategories && req.user.assignedCategories.length > 0) {
             query = { _id: { $in: req.user.assignedCategories } };
         }
+        // Admin requests are not cached (personalized)
+        const categories = await Category.find(query).sort({ order: 1 });
+        return res.json(categories);
     }
 
-    const categories = await Category.find(query).sort({ order: 1 });
+    // Public requests: Use cache
+    const categories = await cache.getOrSet(
+        cache.KEYS.CATEGORIES,
+        async () => {
+            return await Category.find(query).sort({ order: 1 }).lean();
+        },
+        600 // Cache for 10 minutes
+    );
+
     res.json(categories);
 });
 
@@ -41,6 +54,8 @@ const createCategory = asyncHandler(async (req, res) => {
     });
 
     if (category) {
+        // Invalidate category cache
+        await cache.del(cache.KEYS.CATEGORIES);
         res.status(201).json(category);
     } else {
         res.status(400);
@@ -71,6 +86,10 @@ const updateCategory = asyncHandler(async (req, res) => {
         category.order = req.body.order || category.order;
 
         const updatedCategory = await category.save();
+
+        // Invalidate category cache
+        await cache.del(cache.KEYS.CATEGORIES);
+
         res.json(updatedCategory);
     } else {
         res.status(404);
@@ -86,6 +105,10 @@ const deleteCategory = asyncHandler(async (req, res) => {
 
     if (category) {
         await category.deleteOne();
+
+        // Invalidate category cache
+        await cache.del(cache.KEYS.CATEGORIES);
+
         res.json({ message: 'Category removed' });
     } else {
         res.status(404);

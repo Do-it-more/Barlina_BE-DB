@@ -3,6 +3,7 @@ const Product = require('../models/Product');
 const Order = require('../models/Order');
 const StockSubscription = require('../models/StockSubscription');
 const sendEmail = require('../utils/sendEmail');
+const cache = require('../services/cacheService');
 
 const Category = require('../models/Category');
 
@@ -25,7 +26,11 @@ const getProducts = asyncHandler(async (req, res) => {
         }
     } : {};
 
-    let categoryFilter = req.query.category ? { category: req.query.category } : {};
+    let categoryFilter = {};
+    if (req.query.category) {
+        const categories = req.query.category.split(',');
+        categoryFilter = { category: { $in: categories } };
+    }
 
     // RBAC: Filter by assigned categories ONLY if specific categories are assigned.
     // If no categories are assigned, we assume the Admin has global product access.
@@ -33,55 +38,108 @@ const getProducts = asyncHandler(async (req, res) => {
         const assignedCategoryIds = req.user.assignedCategories;
 
         if (assignedCategoryIds && assignedCategoryIds.length > 0) {
-            // Product model stores category NAME usually, but let's confirm.
-            // Earlier fix confirmed we need to map IDs to Names.
             const allowedCategories = await Category.find({ _id: { $in: assignedCategoryIds } });
-            const allowedCategoryNames = allowedCategories.map(c => c.name);
+            const allowedCategoryNames = allowedCategories.map(c => c.name.toLowerCase());
 
             if (req.query.category) {
-                if (!allowedCategoryNames.includes(req.query.category)) {
-                    // Return empty if trying to access unauthorized category
-                    return res.json([]);
+                const requestedCategories = req.query.category.split(',').map(c => c.toLowerCase());
+                const authorizedCategories = requestedCategories.filter(c => allowedCategoryNames.includes(c));
+
+                if (authorizedCategories.length === 0) {
+                    return res.json({ products: [], page: 1, pages: 0, total: 0 });
                 }
+                categoryFilter = { category: { $in: authorizedCategories } };
             } else {
-                // Restrict to allowed categories
                 categoryFilter = { category: { $in: allowedCategoryNames } };
             }
         }
-        // Else: No assigned categories -> View ALL products (Global Access)
     }
 
     const pageSize = Number(req.query.limit) || 12;
     const page = Number(req.query.page) || 1;
 
+    // Additional Filters from Query Params
+    if (req.query.minPrice || req.query.maxPrice) {
+        publicFilter.price = {};
+        if (req.query.minPrice) publicFilter.price.$gte = Number(req.query.minPrice);
+        if (req.query.maxPrice) publicFilter.price.$lte = Number(req.query.maxPrice);
+    }
+
+    if (req.query.rating) {
+        publicFilter.rating = { $gte: Number(req.query.rating) };
+    }
+
+    if (req.query.onlyInStock === 'true') {
+        publicFilter.countInStock = { $gt: 0 };
+    }
+
     // Combine all filters
     const finalFilter = { ...publicFilter, ...keyword, ...categoryFilter };
 
+    // TIER 2: Cache product listings for public (non-admin) requests
+    const cacheKey = cache.KEYS.PRODUCT_LIST(page, req.query.category, req.query.keyword, req.query.minPrice, req.query.maxPrice, req.query.rating, req.query.onlyInStock);
+    const isPublicRequest = !req.user || !['admin', 'super_admin'].includes(req.user?.role);
+
+    if (isPublicRequest) {
+        const cached = await cache.get(cacheKey);
+        if (cached) {
+            return res.json(cached);
+        }
+    }
+
     const count = await Product.countDocuments(finalFilter);
+
+    let sortRule = { createdAt: -1, _id: 1 };
+    if (req.query.sort === 'bestSelling') {
+        sortRule = { sales: -1, _id: 1 };
+    } else if (req.query.sort === 'rating') {
+        sortRule = { rating: -1, _id: 1 };
+    } else if (req.query.sort === 'newest') {
+        sortRule = { createdAt: -1, _id: 1 };
+    } else if (req.query.sort === 'lowToHigh') {
+        sortRule = { price: 1, _id: 1 };
+    } else if (req.query.sort === 'highToLow') {
+        sortRule = { price: -1, _id: 1 };
+    }
 
     const products = await Product.find(finalFilter)
         .populate('seller', 'businessName ownerName user')
-        .select('name price discountPrice image countInStock isStockEnabled rating numReviews category isCodAvailable estimatedDeliveryDays colors specifications seller ownerType')
+        .select('name price discountPrice image countInStock isStockEnabled rating numReviews category isCodAvailable estimatedDeliveryDays colors specifications seller ownerType sales createdAt')
+        .sort(sortRule)
         .limit(pageSize)
-        .skip(pageSize * (page - 1));
+        .skip(pageSize * (page - 1))
+        .lean();
 
-    res.json({ products, page, pages: Math.ceil(count / pageSize), total: count });
+    const result = { products, page, pages: Math.ceil(count / pageSize), total: count };
+
+    // Cache public requests for 2 minutes
+    if (isPublicRequest) {
+        await cache.set(cacheKey, result, 120);
+    }
+
+    res.json(result);
 });
 
 // @desc    Get top rated products
 // @route   GET /api/products/top
 // @access  Public
 const getTopProducts = asyncHandler(async (req, res) => {
-    // Return newest 10 products as a simple "Top" metric for now, or just limit 8
-    // Only show Live, Approved, and Non-deleted products
-    const products = await Product.find({
-        isDeleted: false,
-        listingStatus: 'APPROVED',
-        isLive: true
-    })
-        .sort({ createdAt: -1 })
-        .select('name price discountPrice image countInStock isStockEnabled rating numReviews category')
-        .limit(12);
+    // TIER 2: Cache top products for 5 minutes
+    const products = await cache.getOrSet(
+        cache.KEYS.TOP_PRODUCTS,
+        async () => {
+            return await Product.find({
+                isDeleted: false,
+                listingStatus: 'APPROVED',
+                isLive: true
+            })
+                .sort({ sales: -1, rating: -1 })
+                .limit(4)
+                .select('name price discountPrice image countInStock isStockEnabled rating numReviews category sales')
+                .lean();
+        },
+        300 // 5 minutes
+    );
     res.json(products);
 });
 
@@ -89,7 +147,15 @@ const getTopProducts = asyncHandler(async (req, res) => {
 // @route   GET /api/products/:id
 // @access  Public
 const getProductById = asyncHandler(async (req, res) => {
-    const product = await Product.findById(req.params.id);
+    // TIER 2: Cache individual product for 3 minutes
+    const product = await cache.getOrSet(
+        cache.KEYS.PRODUCT_DETAIL(req.params.id),
+        async () => {
+            const doc = await Product.findById(req.params.id).lean();
+            return doc || null;
+        },
+        180 // 3 minutes
+    );
 
     if (product) {
         res.json(product);
@@ -116,7 +182,6 @@ const createProduct = asyncHandler(async (req, res) => {
         images: images || [mainImage],
         brand,
         category,
-        category,
         countInStock,
         isStockEnabled: isStockEnabled !== undefined ? isStockEnabled : true,
         isCodAvailable: isCodAvailable !== undefined ? isCodAvailable : true,
@@ -129,6 +194,10 @@ const createProduct = asyncHandler(async (req, res) => {
     });
 
     const createdProduct = await product.save();
+
+    // TIER 2: Invalidate product caches
+    await cache.delPattern('products:*');
+
     res.status(201).json(createdProduct);
 });
 
@@ -180,6 +249,8 @@ const deleteProduct = asyncHandler(async (req, res) => {
 
         // Processing for Super Admin
         await product.deleteOne();
+        // TIER 2: Invalidate product caches
+        await cache.delPattern('products:*');
         res.json({ message: 'Product removed' });
     } else {
         res.status(404);
@@ -225,6 +296,11 @@ const updateProduct = asyncHandler(async (req, res) => {
         product.returnPolicy = req.body.returnPolicy || product.returnPolicy; // Persist Return Policy
 
         const updatedProduct = await product.save();
+
+        // TIER 2: Invalidate product caches
+        await cache.del(cache.KEYS.PRODUCT_DETAIL(req.params.id));
+        await cache.delPattern('products:list:*');
+        await cache.del(cache.KEYS.TOP_PRODUCTS);
 
         // Check if stock was updated from 0 to > 0
         if (previousStock <= 0 && updatedProduct.countInStock > 0 && updatedProduct.isStockEnabled !== false) {
@@ -326,6 +402,10 @@ const createProductReview = asyncHandler(async (req, res) => {
             product.reviews.length;
 
         await product.save();
+
+        // TIER 2: Invalidate product detail cache
+        await cache.del(cache.KEYS.PRODUCT_DETAIL(req.params.id));
+
         res.status(201).json({ message: 'Review added' });
     } else {
         res.status(404);

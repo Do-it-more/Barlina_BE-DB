@@ -34,7 +34,7 @@ const getAddresses = asyncHandler(async (req, res) => {
 // @route   POST /api/users/addresses
 // @access  Private
 const addAddress = asyncHandler(async (req, res) => {
-    const { label, street, city, state, postalCode, country, phoneNumber, isDefault } = req.body;
+    const { label, doorNumber, street, city, state, postalCode, country, phoneNumber, isDefault } = req.body;
 
     const user = await User.findById(req.user._id);
 
@@ -47,7 +47,7 @@ const addAddress = asyncHandler(async (req, res) => {
             req.body.isDefault = true;
         }
 
-        user.addresses.push({ label, street, city, state, postalCode, country, phoneNumber, isDefault: req.body.isDefault });
+        user.addresses.push({ label, doorNumber, street, city, state, postalCode, country, phoneNumber, isDefault: req.body.isDefault });
         await user.save();
 
         res.status(201).json(user.addresses);
@@ -61,7 +61,7 @@ const addAddress = asyncHandler(async (req, res) => {
 // @route   PUT /api/users/addresses/:id
 // @access  Private
 const updateAddress = asyncHandler(async (req, res) => {
-    const { label, street, city, state, postalCode, country, phoneNumber, isDefault } = req.body;
+    const { label, doorNumber, street, city, state, postalCode, country, phoneNumber, isDefault } = req.body;
 
     const user = await User.findById(req.user._id);
 
@@ -74,6 +74,7 @@ const updateAddress = asyncHandler(async (req, res) => {
             }
 
             address.label = label || address.label;
+            address.doorNumber = doorNumber !== undefined ? doorNumber : address.doorNumber;
             address.street = street || address.street;
             address.city = city || address.city;
             address.state = state || address.state;

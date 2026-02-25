@@ -31,6 +31,7 @@ const settingSchema = mongoose.Schema({
     },
     // Company Information
     companyName: { type: String, default: 'Barlina Fashion Design' },
+    companyTagline: { type: String, default: 'Discover the latest trends in tech and lifestyle. Quality products, premium service, and fast delivery guaranteed.' },
     companyEmail: { type: String, default: 'support@barlina.com' },
     companyPhone: { type: String, default: '+91 9876543210' },
     companyAddress: {
